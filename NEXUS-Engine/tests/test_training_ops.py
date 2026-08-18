@@ -216,3 +216,26 @@ def test_suite_flags_overfitting(tmp_path):
                     train_metrics={"train_ce": 0.01})
     check = [c for c in rep.checks if c.name == "overfit_gap"][0]
     assert not check.passed and rep.metrics["overfit_gap"] > 0.1
+
+
+def test_max_steps_wins_over_epochs(tmp_path):
+    """Бюджет шагов должен выбираться полностью, даже если корпус меньше."""
+    from nexus.training.train_lm import train
+    out = train("mathgen:40", "core", "tiny", seq_len=64,
+                registry_root=str(tmp_path / "reg"), max_steps=120, batch_size=4,
+                grad_accum=1, log_every=1000, eval_every=0)
+    assert out["metrics"]["steps"] == 120       # раньше обрывалось на первой эпохе
+
+
+def test_data_budget_report_warns_on_small_corpus(tmp_path, capsys):
+    from nexus.config import NexusConfig
+    from nexus.data.corpora import PackedLMDataset
+    from nexus.model import NexusEngine
+    from nexus.training.trainer import TrainConfig, Trainer
+    ds = PackedLMDataset("builtin:engineering", seq_len=64, min_blocks=4)
+    cfg = TrainConfig(max_steps=4, batch_size=2, grad_accum=1, log_every=100,
+                      registry_root=str(tmp_path))
+    Trainer(NexusEngine(NexusConfig.small()), cfg, ds).fit()
+    printed = capsys.readouterr().out
+    assert "токенов на параметр" in printed
+    assert "ВНИМАНИЕ" in printed                # 237M параметров на крошечном корпусе

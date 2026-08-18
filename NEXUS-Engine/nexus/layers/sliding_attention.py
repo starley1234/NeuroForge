@@ -46,6 +46,20 @@ class SlidingWindowAttention(nn.Module):
         self.to_k = nn.Linear(d_model, cfg.n_kv_heads * self.hd, bias=False)
         self.to_v = nn.Linear(d_model, cfg.n_kv_heads * self.hd, bias=False)
         self.out = nn.Linear(cfg.n_heads * self.hd, d_model, bias=False)
+        # RoPE и маску окна пересоздавать на каждый токен дорого: при потоковой
+        # генерации это была заметная доля времени. Кэшируем и растим по мере надобности.
+        self._rope_len = 0
+        self.register_buffer("_cos", torch.empty(0), persistent=False)
+        self.register_buffer("_sin", torch.empty(0), persistent=False)
+
+    def _rope(self, length: int, device, dtype):
+        """Кэш cos/sin: считается один раз и переиспользуется между шагами."""
+        if (self._rope_len < length or self._cos.device != device
+                or self._cos.dtype != dtype):
+            grow = max(length, self.cfg.window * 2, 256)
+            cos, sin = build_rope_cache(grow, self.hd, self.cfg.rope_theta, device, dtype)
+            self._cos, self._sin, self._rope_len = cos, sin, grow
+        return self._cos, self._sin
 
     def forward(
         self,
@@ -60,9 +74,9 @@ class SlidingWindowAttention(nn.Module):
         v = self.to_v(h).view(b, t, self.n_kv, self.hd).transpose(1, 2)
 
         past = cache.k.shape[2] if cache is not None else 0
-        cos, sin = build_rope_cache(past + t, self.hd, self.cfg.rope_theta, x.device, x.dtype)
-        q = apply_rope(q, cos[past:], sin[past:])
-        k = apply_rope(k, cos[past:], sin[past:])
+        cos, sin = self._rope(past + t, x.device, x.dtype)
+        q = apply_rope(q, cos[past:past + t], sin[past:past + t])
+        k = apply_rope(k, cos[past:past + t], sin[past:past + t])
 
         if cache is not None:
             k = torch.cat([cache.k, k], dim=2)

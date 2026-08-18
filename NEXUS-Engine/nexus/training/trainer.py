@@ -135,7 +135,15 @@ class Trainer:
         cfg = self.cfg
         dl = DataLoader(self.train_ds, batch_size=cfg.batch_size, shuffle=True,
                         num_workers=cfg.num_workers, drop_last=False)
-        total = cfg.max_steps or (len(dl) * cfg.epochs)
+        steps_per_epoch = max(1, len(dl))
+        total = cfg.max_steps or (steps_per_epoch * cfg.epochs)
+        # если запрошено больше шагов, чем помещается в epochs — идём по корпусу
+        # столько раз, сколько нужно: раньше обучение молча обрывалось на первой
+        # эпохе и «20000 шагов» превращались в 667
+        epochs = cfg.epochs
+        if cfg.max_steps:
+            epochs = max(cfg.epochs, math.ceil(cfg.max_steps / steps_per_epoch))
+        self._log_data_budget(total, steps_per_epoch, epochs)
         opt = build_optimizer(self.model, cfg.lr, cfg.weight_decay, cfg.eight_bit)
         amp_on = bool(cfg.amp) and cfg.device.startswith("cuda")
         amp_dtype = _resolve_amp_dtype(cfg.amp_dtype, cfg.device) if amp_on else None
@@ -150,7 +158,7 @@ class Trainer:
         stop = False
         train_window: list[float] = []
         self.model.train()
-        for epoch in range(cfg.epochs):
+        for epoch in range(epochs):
             for batch in dl:
                 for g in opt.param_groups:
                     g["lr"] = cosine_lr(step, total, cfg.lr, cfg.warmup)
@@ -251,6 +259,36 @@ class Trainer:
             metrics.update(self.evaluate())
             metrics["overfit_gap"] = round(metrics["val_loss"] - train_ce, 5)
         return metrics
+
+    def _log_data_budget(self, total_steps: int, steps_per_epoch: int,
+                         epochs: int) -> None:
+        """Честно сказать, хватает ли данных под запрошенный бюджет шагов."""
+        cfg = self.cfg
+        seq_len = getattr(self.train_ds, "seq_len", None)
+        if seq_len is None:
+            sample = self.train_ds[0]
+            seq_len = int(sample["tokens"].shape[-1])
+        tokens_total = steps_per_epoch * cfg.batch_size * seq_len
+        tokens_seen = total_steps * cfg.batch_size * seq_len
+        params = sum(p.numel() for p in self.model.parameters())
+        ratio = tokens_total / max(params, 1)
+
+        print(f"[{cfg.stage}] бюджет: {total_steps} шагов = {epochs} эпох "
+              f"по {steps_per_epoch} шагов; корпус ≈ {tokens_total / 1e6:.1f}M токенов, "
+              f"пройдём {tokens_seen / 1e6:.1f}M", flush=True)
+        print(f"[{cfg.stage}] модель {params / 1e6:.0f}M параметров → "
+              f"{ratio:.2f} токенов на параметр "
+              f"(для обучения с нуля нужно ≈20)", flush=True)
+        if ratio < 1.0:
+            print(f"[{cfg.stage}] ВНИМАНИЕ: данных мало для модели такого размера. "
+                  f"Варианты: увеличить корпус (nexus gen-math -n 500000, "
+                  f"nexus flywheel -n 20000, свои данные через nexus ingest), "
+                  f"взять пресет поменьше (--preset tiny) или дообучать готовую "
+                  f"модель вместо обучения с нуля.", flush=True)
+        if epochs > 10:
+            print(f"[{cfg.stage}] ВНИМАНИЕ: {epochs} проходов по одному корпусу — "
+                  f"после 3–5 эпох модель начнёт заучивать примеры вместо языка.",
+                  flush=True)
 
     @torch.no_grad()
     def evaluate(self, dataset: Optional[Dataset] = None) -> Dict[str, float]:

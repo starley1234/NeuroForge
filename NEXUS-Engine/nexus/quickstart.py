@@ -23,10 +23,12 @@ SCALES: Dict[str, Dict[str, Any]] = {
                    preset="tiny",  batch=2, math=200),
     "medium": dict(samples=500,   grid=22, fem=14, vocab=8192,  seq_len=512,  max_steps=1500,
                    preset="small", batch=4, math=5000),
+    # gpu: корпус подобран под число шагов — 500k математических задач и 5k деталей
+    # дают ~60M токенов, этого хватает на 3-4 эпохи для модели 200M без зубрёжки
     "gpu":    dict(samples=5000,  grid=26, fem=16, vocab=16384, seq_len=1024, max_steps=20000,
-                   preset="small", batch=8, math=50000),
+                   preset="small", batch=8, math=500000),
     "gpu-large": dict(samples=20000, grid=32, fem=24, vocab=32768, seq_len=1024,
-                      max_steps=60000, preset="rtx5060-compact", batch=4, math=200000),
+                      max_steps=60000, preset="rtx5060-compact", batch=4, math=2000000),
 }
 
 
@@ -121,8 +123,16 @@ def run_quickstart(
     math_n = int(cfg.get("math", 0))
     corpus = f"flywheel:{data_dir}"
     if math_n:
-        corpus = (f"mix:flywheel:{data_dir}=0.7,mathgen:{math_n}#seed=1=0.3")
-        print(f"   + инженерная математика: {math_n} задач в микс (30 % корпуса)")
+        corpus = (f"mix:flywheel:{data_dir}=0.5,mathgen:{math_n}#seed=1=0.5")
+        print(f"   + инженерная математика: {math_n} задач в микс (50 % корпуса)")
+
+    # предупредим заранее, если бюджет шагов заведомо не обеспечен данными
+    approx_tokens = cfg["samples"] * 1500 + math_n * 120
+    need_tokens = cfg["max_steps"] * int(cfg.get("batch", 2)) * cfg["seq_len"]
+    if approx_tokens and need_tokens > 6 * approx_tokens:
+        print(f"   ! корпус ≈{approx_tokens / 1e6:.0f}M токенов, а бюджет требует "
+              f"{need_tokens / 1e6:.0f}M — будет много эпох по одному и тому же. "
+              f"Добавьте --math/--samples или уменьшите --steps")
 
     # 3 ── токенизатор -----------------------------------------------------
     _banner(3, total, f"Обучение BPE-токенизатора (vocab {cfg['vocab']})")
@@ -141,9 +151,9 @@ def run_quickstart(
                    registry_root=registry_root, tokenizer_path=tok_path,
                    max_steps=cfg["max_steps"], batch_size=int(cfg.get("batch", 2)),
                    grad_accum=4, device=device, amp=device.startswith("cuda"),
-                   eval_every=max(10, cfg["max_steps"] // 20),
-                   patience=5 if cfg["max_steps"] >= 500 else 0,
-                   log_every=max(1, cfg["max_steps"] // 20))
+                   eval_every=max(10, min(500, cfg["max_steps"] // 20)),
+                   patience=6 if cfg["max_steps"] >= 500 else 0,
+                   log_every=max(1, min(200, cfg["max_steps"] // 40)))
     steps["training"] = {"metrics": out["metrics"], "version": out["version"]["version"]}
     print(f"   версия {out['version']['name']}:v{out['version']['version']:04d}, "
           f"val_loss={out['metrics'].get('val_loss')}")

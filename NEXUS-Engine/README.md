@@ -62,7 +62,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 148 тестов, ~60 с на CPU
+pytest -q                        # 150 тестов, ~60 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -417,7 +417,7 @@ nexus/
                             limits.py (валидация и пределы) · openapi.py
   eval/                     suite.py (quality gate) · ablate.py (A/B блоков)
                             bench.py (A/B генераторов) · needle.py · vram.py
-tests/                      148 тестов: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      150 тестов: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
