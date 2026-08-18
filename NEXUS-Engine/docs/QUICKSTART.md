@@ -85,6 +85,42 @@ python -m venv .venv
 считает по ним FEM → обучает BPE-токенизатор → обучает ядро → прогоняет
 приёмочные тесты и, если они прошли, помечает версию как `production`.
 
+## 1.1 Видеокарта NVIDIA (важно!)
+
+`pip install torch` тянет с PyPI **CPU-сборку**, поэтому на машине с RTX всё
+молча считается на процессоре. Для карт 50-й серии (RTX 5060/5070/5080/5090,
+архитектура Blackwell, sm_120) нужны колёса **cu128** и PyTorch ≥ 2.7.
+
+`setup` теперь сам находит `nvidia-smi` и ставит правильную сборку. Если torch
+уже стоит в CPU-варианте — одна команда:
+
+```powershell
+.\nexus.ps1 gpu       # Windows
+./nexus.sh gpu        # Linux / WSL
+```
+
+Вручную то же самое:
+
+```powershell
+.\.venv\Scripts\pip uninstall -y torch
+.\.venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu128
+```
+
+Именно `--index-url`, а не `--extra-index-url`: иначе pip снова возьмёт CPU-колесо
+с PyPI. Переопределить выбор: `$env:NEXUS_CUDA = "cu126"` (40xx/30xx) или `"cpu"`.
+
+Проверка: `.\nexus.ps1 doctor` → `"cuda_available": true`, `"gpu_capability": "sm_120"`.
+
+Дальше запускайте с GPU-масштабом:
+
+```powershell
+$env:NEXUS_SCALE = "gpu"
+.\nexus.ps1 quickstart          # либо: .\nexus.ps1 cli quickstart --scale gpu --device cuda
+```
+
+Для 16 ГБ VRAM (5060 Ti): пресет `rtx5060-compact` (~8.4 ГБ) или `rtx5060` (~12.2 ГБ),
+AMP включается автоматически при обучении на CUDA.
+
 ## 2. Проверка, что работает
 
 ```bash
@@ -140,6 +176,8 @@ docker compose up -d                       # поднять API на :8000
 | PowerShell: `Отсутствует закрывающий знак "}"` | старый `nexus.ps1` без BOM; сделайте `git pull` (файл теперь ASCII + BOM + CRLF) |
 | WSL: `env: $'bash\r'` | CRLF-окончания: `sed -i 's/\r$//' nexus.sh` после `git pull` |
 | Python 3.13+ и torch не ставится | возьмите Python 3.11/3.12 (`py -3.11 -m venv .venv`) |
+| Есть RTX, но `CUDA: False` | стоит CPU-сборка torch: `.\nexus.ps1 gpu` (RTX 50xx → cu128) |
+| `sm_120 is not compatible` | старое колесо CUDA: нужен cu128 и torch ≥ 2.7 |
 | torch ставится очень долго | это ~800 МБ; для GPU-сборки `NEXUS_GPU=1 ./nexus.sh setup` |
 | `quickstart` завершился с «ПРОВАЛЕНО» | норма для `nano`: слишком мало шагов; берите `small` и выше |
 | порт занят | `NEXUS_PORT=8100 ./nexus.sh serve` |

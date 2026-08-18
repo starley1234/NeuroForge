@@ -74,6 +74,57 @@ function Invoke-NexusCli([string[]]$CliArgs) {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+function Get-CudaWheel {
+  # NEXUS_CUDA overrides autodetection: cu128 | cu126 | cpu
+  if ($env:NEXUS_CUDA) { return $env:NEXUS_CUDA }
+  $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+  if ($null -eq $smi) { return "cpu" }
+  $name = ""
+  try { $name = (& nvidia-smi --query-gpu=name --format=csv,noheader) -join " " } catch { }
+  $name = $name.ToUpper()
+  if ($name -match "RTX 50") { return "cu128" }     # Blackwell sm_120
+  if ($name -match "RTX 40" -or $name -match "RTX 30") { return "cu126" }
+  return "cu128"
+}
+
+function Install-Torch {
+  $wheel = Get-CudaWheel
+  if ($wheel -eq "cpu") {
+    Write-Info "no NVIDIA GPU detected - installing CPU build of torch"
+    & $Pip install --quiet torch
+    return
+  }
+  Write-Info ("NVIDIA GPU detected - installing torch build " + $wheel)
+  & $Pip uninstall -y -q torch 2>$null | Out-Null
+  & $Pip install torch --index-url ("https://download.pytorch.org/whl/" + $wheel)
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warn "CUDA wheel failed, falling back to CPU build"
+    & $Pip install --quiet torch
+  }
+}
+
+function Test-Cuda {
+  $probe = "import torch, json; print(json.dumps({'v': torch.__version__, 'cuda': torch.cuda.is_available()}))"
+  $raw = & $Py -c $probe
+  Write-Info ("torch: " + $raw)
+  if ($raw -match '"cuda": false' -and (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) {
+    Write-Warn "GPU is present but torch does not see CUDA. Fix:  .\nexus.ps1 gpu"
+  }
+}
+
+function Invoke-InstallGpu {
+  Test-Environment
+  $wheel = $env:NEXUS_CUDA
+  if (-not $wheel) { $wheel = Get-CudaWheel }
+  if ($wheel -eq "cpu") { $wheel = "cu128" }
+  Write-Info ("reinstalling torch with CUDA build " + $wheel)
+  & $Pip uninstall -y torch
+  & $Pip install torch --index-url ("https://download.pytorch.org/whl/" + $wheel)
+  if ($LASTEXITCODE -ne 0) { Stop-WithError "failed to install CUDA wheel" }
+  Test-Cuda
+  Invoke-NexusCli @("doctor")
+}
+
 function Invoke-Setup {
   if (-not (Test-Path $Py)) {
     $python = Get-PythonExe
@@ -82,14 +133,12 @@ function Invoke-Setup {
     if (-not (Test-Path $Py)) { Stop-WithError ("failed to create venv at " + $Venv) }
     & $Py -m pip install --quiet --upgrade pip
   }
-  Write-Info "installing dependencies (torch is ~800 MB, this takes a few minutes)"
-  if ($env:NEXUS_GPU -eq "1") {
-    & $Pip install --quiet torch --index-url https://download.pytorch.org/whl/cu124
-    if ($LASTEXITCODE -ne 0) { Write-Warn "CUDA build failed, falling back to CPU wheel" }
-  }
+  Write-Info "installing dependencies (torch is ~2-3 GB for CUDA builds)"
+  Install-Torch
   & $Pip install --quiet -e ".[dev]"
   if ($LASTEXITCODE -ne 0) { Stop-WithError "package installation failed" }
   Write-Ok "dependencies installed"
+  Test-Cuda
 
   Write-Info "environment self-check"
   Invoke-NexusCli @("doctor")
@@ -123,11 +172,12 @@ function Show-Usage {
     "  .\nexus.ps1 demo                 architecture demo (all three levels)",
     "  .\nexus.ps1 analyze FILE.scad    mass, audit, FEM for a part",
     "  .\nexus.ps1 test                 test suite",
+    "  .\nexus.ps1 gpu                  reinstall torch with CUDA (RTX 50xx -> cu128)",
     "  .\nexus.ps1 doctor               environment diagnostics",
     "  .\nexus.ps1 cli ...              any CLI command (nexus --help)",
     "",
     "Env vars: NEXUS_VENV, NEXUS_PORT, NEXUS_SCALE (nano|small|medium|gpu),",
-    "          NEXUS_GPU=1, NEXUS_API_KEY"
+    "          NEXUS_CUDA (cu128|cu126|cpu), NEXUS_API_KEY"
   )
   foreach ($line in $lines) { Write-Host $line }
 }
@@ -148,6 +198,8 @@ if ($action -eq "setup") {
   Invoke-NexusCli (@("demo") + $Rest)
 } elseif ($action -eq "analyze") {
   Invoke-NexusCli (@("analyze") + $Rest)
+} elseif ($action -eq "gpu") {
+  Invoke-InstallGpu
 } elseif ($action -eq "doctor") {
   Invoke-NexusCli @("doctor")
 } elseif ($action -eq "test") {

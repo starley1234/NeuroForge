@@ -44,12 +44,17 @@ def run_quickstart(
     scale: str = "small",
     model_name: str = "core",
     workdir: str = "artifacts",
-    device: str = "cpu",
+    device: str = "auto",
     skip_data: bool = False,
     serve_after: bool = False,
     port: int = 8000,
 ) -> QuickstartResult:
-    cfg = SCALES[scale]
+    from .runtime import describe, gpu_report, pick_device
+    device = pick_device(device)
+    cfg = dict(SCALES[scale])
+    if device.startswith("cuda") and scale in ("nano", "small"):
+        print(f"[nexus] обнаружен GPU ({describe(device)}). "
+              f"Для полноценного прогона используйте --scale gpu")
     t0 = time.time()
     steps: Dict[str, Any] = {}
     total = 6
@@ -68,16 +73,20 @@ def run_quickstart(
     from .fem.calculix import available as ccx
     from .scad.render import openscad_binary
 
+    gpu = gpu_report()
     env = {
         "torch": torch.__version__,
         "cuda": torch.cuda.is_available(),
+        "gpu": gpu.get("gpu"),
         "device": device,
         "openscad": bool(openscad_binary()),
         "calculix": ccx(),
         "vram_estimate_gb": estimate(NexusConfig.rtx5060()).total_gb,
     }
     steps["environment"] = env
-    print(f"   torch {env['torch']}, CUDA: {env['cuda']}, устройство: {device}")
+    print(f"   torch {env['torch']}, CUDA: {env['cuda']}, устройство: {describe(device)}")
+    if gpu.get("problem"):
+        print(f"   !  {gpu['problem']}\n      починка: {gpu['fix']}")
     print(f"   OpenSCAD: {'есть' if env['openscad'] else 'нет (встроенный CSG)'}, "
           f"CalculiX: {'есть' if env['calculix'] else 'нет (встроенный МКЭ)'}")
 
@@ -108,7 +117,8 @@ def run_quickstart(
     out = train_lm(f"flywheel:{data_dir}", model_name, cfg["preset"], seq_len=cfg["seq_len"],
                    registry_root=registry_root, tokenizer_path=tok_path,
                    max_steps=cfg["max_steps"], batch_size=2, grad_accum=4,
-                   device=device, log_every=max(1, cfg["max_steps"] // 5))
+                   device=device, amp=device.startswith("cuda"),
+                   log_every=max(1, cfg["max_steps"] // 5))
     steps["training"] = {"metrics": out["metrics"], "version": out["version"]["version"]}
     print(f"   версия {out['version']['name']}:v{out['version']['version']:04d}, "
           f"val_loss={out['metrics'].get('val_loss')}")

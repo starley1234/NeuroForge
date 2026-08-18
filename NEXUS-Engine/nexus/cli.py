@@ -140,14 +140,22 @@ def _cmd_doctor(args) -> int:
     from .config import NexusConfig
     from .eval.vram import estimate
     from .fem.calculix import available as ccx
+    from .runtime import gpu_report
     from .scad.render import openscad_binary
 
+    gpu = gpu_report()
     checks = {
         "python": platform.python_version(),
         "platform": platform.platform(),
         "torch": torch.__version__,
+        "torch_cuda_build": gpu.get("torch_cuda_build"),
         "cuda_available": torch.cuda.is_available(),
-        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "gpu": gpu.get("gpu") or (gpu.get("nvidia_smi") or {}).get("name"),
+        "gpu_driver": (gpu.get("nvidia_smi") or {}).get("driver"),
+        "gpu_capability": gpu.get("capability"),
+        "gpu_vram_gb": gpu.get("vram_gb"),
+        "torch_arch_list": gpu.get("arch_list"),
+        "selected_device": gpu.get("device"),
         "cpu_threads": torch.get_num_threads(),
         "openscad": openscad_binary() or "нет (используется встроенный CSG-движок)",
         "calculix": "есть" if ccx() else "нет (используется встроенный МКЭ на гексаэдрах)",
@@ -167,6 +175,15 @@ def _cmd_doctor(args) -> int:
     except Exception as exc:
         checks["selftest"] = {"ok": False, "error": str(exc)}
     print(json.dumps(checks, indent=2, ensure_ascii=False))
+
+    if gpu.get("problem"):
+        print("\n!  " + gpu["problem"])
+        print("   Починка:  " + str(gpu.get("fix")))
+        print("   Или одной командой:  .\\nexus.ps1 gpu   (Windows)  |  "
+              "./nexus.sh gpu   (Linux)")
+    elif checks["cuda_available"]:
+        print(f"\nOK GPU готов: {checks['gpu']} ({checks['gpu_vram_gb']} ГБ, "
+              f"{checks['gpu_capability']}). Обучение: --scale gpu --device cuda")
     return 0
 
 
@@ -381,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--grad-accum", type=int, default=8)
     p.add_argument("--max-steps", type=int, default=None)
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.add_argument("--eight-bit", action="store_true")
     p.set_defaults(fn=_cmd_pretrain)
 
@@ -391,7 +408,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.set_defaults(fn=_cmd_train_fno)
 
     p = sub.add_parser("rl", help="фаза 4: Physics-RL (GRPO)")
@@ -400,13 +417,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--steps", type=int, default=5)
     p.add_argument("--group-size", type=int, default=4)
     p.add_argument("--max-new-tokens", type=int, default=64)
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.set_defaults(fn=_cmd_rl)
 
     p = sub.add_parser("needle", help="тест O(1) памяти на длинном контексте")
     p.add_argument("--lengths", default="1024,4096,16384")
     p.add_argument("--preset", choices=["tiny", "rtx5060"], default="tiny")
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.set_defaults(fn=_cmd_needle)
 
     p = sub.add_parser("vram", help="бюджет VRAM")
@@ -431,7 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-steps", type=int, default=None)
     p.add_argument("--eval-every", type=int, default=0)
     p.add_argument("--patience", type=int, default=0)
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.add_argument("--amp", action="store_true")
     p.add_argument("--eight-bit", action="store_true")
     p.add_argument("--registry", default="artifacts/registry")
@@ -457,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--grad-accum", type=int, default=8)
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--max-steps", type=int, default=None)
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.add_argument("--registry", default="artifacts/registry")
     p.add_argument("--promote", action="store_true")
     p.set_defaults(fn=_cmd_distill)
@@ -474,7 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gate", action="store_true", help="повысить до production при успехе")
     p.add_argument("--json", default=None, help="сохранить отчёт в файл")
     p.add_argument("--registry", default="artifacts/registry")
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.set_defaults(fn=_cmd_eval)
 
     p = sub.add_parser("registry", help="реестр моделей: версии, теги, откат")
@@ -495,7 +512,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ref", default="production")
     p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
     p.add_argument("--registry", default="artifacts/registry")
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.add_argument("--api-key", default=None, help="или переменная окружения NEXUS_API_KEY")
     p.add_argument("--rate-limit", type=int, default=120)
     p.add_argument("--tokenizer", default=None)
@@ -506,7 +523,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scale", choices=["nano", "small", "medium", "gpu"], default="small")
     p.add_argument("--model-name", default="core")
     p.add_argument("--workdir", default="artifacts")
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.add_argument("--skip-data", action="store_true", help="использовать уже готовый датасет")
     p.add_argument("--serve", action="store_true", help="сразу поднять API после обучения")
     p.add_argument("--port", type=int, default=8000)
@@ -554,7 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model-name", default="core")
     p.add_argument("--ref", default="production")
     p.add_argument("--registry", default="artifacts/registry")
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto")
     p.set_defaults(fn=_cmd_collect)
 
     p = sub.add_parser("mcp", help="MCP-сервер: движок как инструменты для внешней LLM")
@@ -581,6 +598,11 @@ def _force_utf8_console() -> None:
 def main(argv: List[str] | None = None) -> int:
     _force_utf8_console()
     args = build_parser().parse_args(argv)
+    if getattr(args, "device", None) == "auto":
+        from .runtime import describe, pick_device
+        args.device = pick_device("auto")
+        if args.device != "cpu":
+            print(f"[nexus] устройство: {describe(args.device)}", flush=True)
     torch.manual_seed(0)
     return args.fn(args)
 

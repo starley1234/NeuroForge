@@ -37,15 +37,58 @@ ensure_venv() {
   fi
 }
 
+cuda_wheel() {            # cu128 для 50-й серии, иначе cu126; cpu если нет GPU
+  if [ -n "${NEXUS_CUDA:-}" ]; then echo "$NEXUS_CUDA"; return; fi
+  command -v nvidia-smi >/dev/null 2>&1 || { echo cpu; return; }
+  local name
+  name="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 | tr 'a-z' 'A-Z')"
+  case "$name" in
+    *"RTX 50"*) echo cu128 ;;
+    *"RTX 40"*|*"RTX 30"*) echo cu126 ;;
+    "") echo cpu ;;
+    *) echo cu128 ;;
+  esac
+}
+
+install_torch() {
+  local wheel; wheel="$(cuda_wheel)"
+  if [ "$wheel" = "cpu" ]; then
+    info "видеокарта NVIDIA не найдена — ставлю CPU-сборку torch"
+    "$VENV/bin/pip" install --quiet torch
+    return
+  fi
+  info "обнаружен GPU — ставлю torch сборки $wheel"
+  "$VENV/bin/pip" uninstall -y -q torch >/dev/null 2>&1 || true
+  "$VENV/bin/pip" install torch --index-url "https://download.pytorch.org/whl/$wheel" || {
+    warn "CUDA-колесо не поставилось, ставлю CPU-сборку"
+    "$VENV/bin/pip" install --quiet torch
+  }
+}
+
+check_cuda() {
+  "$PY" - <<'PYCHK' || true
+import torch
+print(f"[nexus] torch {torch.__version__}, CUDA: {torch.cuda.is_available()}")
+PYCHK
+}
+
+cmd_gpu() {
+  require_env
+  local wheel; wheel="$(cuda_wheel)"; [ "$wheel" = "cpu" ] && wheel=cu128
+  info "переустанавливаю torch со сборкой $wheel"
+  "$VENV/bin/pip" uninstall -y torch
+  "$VENV/bin/pip" install torch --index-url "https://download.pytorch.org/whl/$wheel" || die "не удалось поставить CUDA-колесо"
+  check_cuda
+  "$PY" -m nexus.cli doctor
+}
+
 cmd_setup() {
   ensure_venv
-  info "устанавливаю зависимости (это может занять пару минут)"
-  if [ "${NEXUS_GPU:-0}" = "1" ]; then
-    "$VENV/bin/pip" install --quiet torch --index-url https://download.pytorch.org/whl/cu124 || \
-      warn "не удалось поставить CUDA-сборку torch, ставлю обычную"
-  fi
+  info "устанавливаю зависимости (CUDA-сборка torch — 2–3 ГБ)"
+  install_torch
   "$VENV/bin/pip" install --quiet -e ".[dev]" || die "ошибка установки пакета"
   ok "зависимости установлены"
+  check_cuda
   info "самопроверка окружения"
   "$PY" -m nexus.cli doctor
   info "быстрые тесты (~30 с)"
@@ -86,10 +129,11 @@ NEXUS-Engine — запуск
   ./nexus.sh demo                 демонстрация всех трёх уровней архитектуры
   ./nexus.sh analyze FILE.scad    масса, аудит, FEM для детали
   ./nexus.sh test                 тесты
+  ./nexus.sh gpu                  переустановить torch с CUDA (RTX 50xx → cu128)
   ./nexus.sh doctor               диагностика окружения
   ./nexus.sh cli ...              любая команда CLI (nexus --help)
 
-Переменные: NEXUS_VENV, NEXUS_PORT, NEXUS_SCALE, NEXUS_GPU=1, NEXUS_API_KEY
+Переменные: NEXUS_VENV, NEXUS_PORT, NEXUS_SCALE, NEXUS_CUDA=cu128|cu126|cpu, NEXUS_API_KEY
 TXT
 }
 
@@ -101,6 +145,7 @@ case "${1:-help}" in
   demo)       shift; cmd_demo "$@" ;;
   analyze)    shift; cmd_analyze "$@" ;;
   test)       shift; cmd_test "$@" ;;
+  gpu)        shift; cmd_gpu "$@" ;;
   doctor)     shift; cmd_doctor "$@" ;;
   cli)        shift; cmd_cli "$@" ;;
   help|-h|--help) usage ;;

@@ -198,3 +198,37 @@ def test_service_stream_and_batch(tmp_path):
 
     metrics = svc.metrics()
     assert "nexus_generation_latency_ms" in metrics and "nexus_models_loaded" in metrics
+
+
+# ─────────────────────────────────────────────────── выбор устройства и GPU
+def test_pick_device_prefers_explicit_and_falls_back():
+    from nexus.runtime import pick_device
+    assert pick_device("cpu") == "cpu"
+    assert pick_device("cuda:1") == "cuda:1"
+    assert pick_device("auto") in ("cpu", "cuda", "mps")
+
+
+def test_gpu_report_has_diagnosis_fields():
+    from nexus.runtime import gpu_report
+    rep = gpu_report()
+    assert {"torch", "cuda_available", "device", "problem", "fix"} <= set(rep)
+    assert isinstance(rep["cuda_available"], bool)
+
+
+def test_fix_command_matches_gpu_generation():
+    from nexus.runtime import _fix_command
+    assert "cu128" in _fix_command({"name": "NVIDIA GeForce RTX 5060 Ti"})
+    assert "cu126" in _fix_command({"name": "NVIDIA GeForce RTX 4070"})
+    assert "--index-url" in _fix_command({"name": "RTX 5090"})
+
+
+def test_trainer_resolves_auto_device(tmp_path):
+    from nexus.config import NexusConfig
+    from nexus.data.corpora import PackedLMDataset
+    from nexus.model import NexusEngine
+    from nexus.training.trainer import TrainConfig, Trainer
+    ds = PackedLMDataset("builtin:engineering", seq_len=32, min_blocks=4)
+    cfg = TrainConfig(device="auto", max_steps=1, batch_size=1, grad_accum=1,
+                      log_every=100, registry_root=str(tmp_path))
+    tr = Trainer(NexusEngine(NexusConfig.tiny()), cfg, ds)
+    assert tr.cfg.device in ("cpu", "cuda", "mps")

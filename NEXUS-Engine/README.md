@@ -16,6 +16,9 @@
 .\nexus.ps1 setup ; .\nexus.ps1 quickstart ; .\nexus.ps1 serve
 ```
 
+Видеокарта NVIDIA определяется автоматически (RTX 50xx → колёса `cu128`).
+Если torch уже стоял в CPU-сборке: `.\nexus.ps1 gpu` / `./nexus.sh gpu`.
+
 Пошагово и с разбором проблем — [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ```

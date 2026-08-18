@@ -36,12 +36,13 @@ class InferenceService:
 
     def __init__(self, registry_root: str = "artifacts/registry",
                  default_model: str = "core", default_ref: str = "production",
-                 device: str = "cpu", preset: str = "tiny", max_cached: int = 2,
+                 device: str = "auto", preset: str = "tiny", max_cached: int = 2,
                  tokenizer_path: Optional[str] = None, compile_model: bool = False):
         self.registry = ModelRegistry(registry_root)
         self.default_model = default_model
         self.default_ref = default_ref
-        self.device = device
+        from ..runtime import pick_device
+        self.device = pick_device(device)
         self.preset = preset
         self.max_cached = max_cached
         self.compile_model = compile_model

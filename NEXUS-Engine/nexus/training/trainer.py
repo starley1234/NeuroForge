@@ -34,7 +34,7 @@ class TrainConfig:
     warmup: int = 20
     max_steps: Optional[int] = None
     clip: float = 1.0
-    device: str = "cpu"
+    device: str = "auto"
     amp: bool = False
     eight_bit: bool = False
     log_every: int = 10
@@ -94,7 +94,9 @@ class Trainer:
                  train_ds: Dataset, val_ds: Optional[Dataset] = None,
                  loss_fn: Optional[LossFn] = None,
                  registry: Optional[ModelRegistry] = None):
+        from ..runtime import pick_device
         torch.manual_seed(cfg.seed)
+        cfg.device = pick_device(cfg.device)
         self.cfg = cfg
         self.model = model.to(cfg.device)
         self.train_ds = train_ds
