@@ -13,7 +13,7 @@ import json
 from typing import Dict, Optional
 
 from ..config import NexusConfig
-from ..data.corpora import PackedLMDataset, split_dataset
+from ..data.corpora import PackedLMDataset, PhysicsLMDataset, split_dataset
 from ..registry import ModelRegistry
 from .trainer import TrainConfig, Trainer, resume_or_new
 
@@ -27,6 +27,7 @@ def train(
     limit: Optional[int] = None,
     val_fraction: float = 0.1,
     val_source: Optional[str] = None,
+    physics: bool = False,
     tokenizer_path: Optional[str] = None,
     registry_root: str = "artifacts/registry",
     promote: bool = False,
@@ -38,14 +39,20 @@ def train(
 
     from ..data.bpe import load_tokenizer
     tokenizer = load_tokenizer(tokenizer_path)
-    ds = PackedLMDataset(source, tokenizer=tokenizer, seq_len=seq_len, limit=limit,
-                         min_blocks=8)
+    if physics:
+        ds = PhysicsLMDataset(source, tokenizer=tokenizer, seq_len=seq_len, limit=limit)
+        print(f"[data] режим с физическими инвариантами: {len(ds)} записей")
+    else:
+        ds = PackedLMDataset(source, tokenizer=tokenizer, seq_len=seq_len, limit=limit,
+                             min_blocks=8)
     cfg.vocab_size = max(cfg.vocab_size, ds.tok.vocab_size)
     if val_source:
         # честный холдаут: валидация из отдельного источника, без пересечения
         train_ds = ds
-        val_ds = PackedLMDataset(val_source, tokenizer=tokenizer, seq_len=seq_len,
-                                 min_blocks=2)
+        val_ds = (PhysicsLMDataset(val_source, tokenizer=tokenizer, seq_len=seq_len)
+                  if physics else
+                  PackedLMDataset(val_source, tokenizer=tokenizer, seq_len=seq_len,
+                                  min_blocks=2))
         print(f"[data] валидация из отдельного источника {val_source}: "
               f"{val_ds.stats.to_dict()}")
     else:
@@ -83,6 +90,8 @@ def main() -> None:
     ap.add_argument("--max-steps", type=int, default=None)
     ap.add_argument("--eval-every", type=int, default=0)
     ap.add_argument("--patience", type=int, default=0)
+    ap.add_argument("--physics", action="store_true",
+                    help="подавать массу и нагрузку как инварианты на шину")
     ap.add_argument("--val-source", default=None,
                     help="отдельный корпус для валидации (честный холдаут)")
     ap.add_argument("--no-keep-best", action="store_true",
@@ -95,7 +104,7 @@ def main() -> None:
     ap.add_argument("--promote", action="store_true", help="сразу пометить как production")
     a = ap.parse_args()
     out = train(a.source, a.model_name, a.preset, a.resume, a.seq_len, a.limit,
-                val_source=a.val_source, tokenizer_path=a.tokenizer,
+                val_source=a.val_source, physics=a.physics, tokenizer_path=a.tokenizer,
                 registry_root=a.registry, promote=a.promote, keep_best=not a.no_keep_best,
                 epochs=a.epochs, batch_size=a.batch_size, grad_accum=a.grad_accum,
                 lr=a.lr, max_steps=a.max_steps, eval_every=a.eval_every,

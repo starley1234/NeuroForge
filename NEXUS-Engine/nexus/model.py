@@ -106,10 +106,19 @@ class NexusEngine(nn.Module):
         use_state: bool = False,
         continuous: bool = False,
         pos_offset: int = 0,
+        invariants: Optional[torch.Tensor] = None,
     ) -> NexusOutput:
+        """invariants: (B, 7) = [x, y, z (м), масса (кг), Fx, Fy, Fz (Н)].
+
+        Эти значения вешаются на каждый текстовый токен, поэтому «сталь, 300 Н
+        вниз» попадает в модель числом на общей шине, а не только словами.
+        """
         pack: List[LatentPacket] = list(packets or [])
         if tokens is not None:
-            pack.insert(0, self.text_encoder(tokens, pos_offset=pos_offset))
+            packet = self.text_encoder(tokens, pos_offset=pos_offset)
+            if invariants is not None:
+                packet = self._attach_invariants(packet, invariants)
+            pack.insert(0, packet)
         assert pack, "нужны либо tokens, либо packets"
 
         x = self.encode(pack)
@@ -132,6 +141,16 @@ class NexusEngine(nn.Module):
         out = NexusOutput(logits, actions, field, physics, aux, trace)
         out.states = new_states if use_state else None  # type: ignore[attr-defined]
         return out
+
+    @staticmethod
+    def _attach_invariants(packet: LatentPacket, invariants: torch.Tensor) -> LatentPacket:
+        """Разложить (B, 7) по полям пакета и растянуть на все токены."""
+        b, t, _ = packet.features.shape
+        inv = invariants.to(packet.features.dtype).view(b, 7)
+        packet.position = inv[:, 0:3].unsqueeze(1).expand(b, t, 3)
+        packet.mass = inv[:, 3:4].expand(b, t)
+        packet.force = inv[:, 4:7].unsqueeze(1).expand(b, t, 3)
+        return packet
 
     def _make_probe(self, occupancy, load) -> Optional[Callable[[torch.Tensor], torch.Tensor]]:
         if self.critic is None or occupancy is None:

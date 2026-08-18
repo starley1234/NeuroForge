@@ -23,6 +23,8 @@
 Что здесь на самом деле построено и что из этого измерено —
 [docs/WHAT_WE_BUILT.md](docs/WHAT_WE_BUILT.md).
 Сценарии применения и план развития — [docs/USE_CASES.md](docs/USE_CASES.md).
+Откуда берётся физика в обучении и запросах —
+[docs/PHYSICS_EXPLAINED.md](docs/PHYSICS_EXPLAINED.md).
 
 ```
 Уровень 1  Continuous Dynamic Encoders   AST-BPE · SSM-Audio/Video · B-Rep GNO · Point-SSM · Event-ODE · Neural-ODE био
@@ -54,7 +56,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 130 тестов, ~55 с на CPU
+pytest -q                        # 133 теста, ~55 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -398,14 +400,14 @@ nexus/
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
   eval/                     suite.py (quality gate) · ablate.py (A/B блоков)
                             needle.py · vram.py
-tests/                      130 тестов: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      133 теста: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · USE_CASES.md
-                            INGEST.md · TRAINING_GUIDE.md · DATA_PLAN.md
+docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · PHYSICS_EXPLAINED.md
+                            USE_CASES.md · INGEST.md · TRAINING_GUIDE.md · DATA_PLAN.md
                             architecture.md · training.md · api.md · operations.md
                             vram_budget.md · roadmap.md
 ```

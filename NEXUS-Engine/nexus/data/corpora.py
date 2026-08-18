@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Iterable, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import torch
 from torch.utils.data import Dataset
@@ -235,6 +235,71 @@ class PackedLMDataset(Dataset):
     def __getitem__(self, i: int):
         chunk = self.data[i * self.seq_len: i * self.seq_len + self.seq_len + 1]
         return {"tokens": chunk[:-1].clone(), "targets": chunk[1:].clone()}
+
+
+PHYSICS_SCALE = {"mass_kg": 1.0, "force_n": 1000.0, "position_m": 1.0}
+
+
+class PhysicsLMDataset(Dataset):
+    """Обучение с физическими инвариантами: текст + вектор [xyz, масса, силы].
+
+    В отличие от `PackedLMDataset` записи не склеиваются: одна деталь — один
+    сэмпл, потому что её масса и нагрузка относятся именно к ней.
+    """
+
+    def __init__(self, path: str, tokenizer: Optional[ASTBPETokenizer] = None,
+                 seq_len: int = 512, field: str = "text", limit: Optional[int] = None,
+                 skip_without_physics: bool = False):
+        import torch as _torch
+
+        self.tok = tokenizer or DEFAULT_TOKENIZER
+        self.seq_len = seq_len
+        self.samples: List[Dict[str, Any]] = []
+        path = path.split(":", 1)[1] if path.startswith("jsonl:") else path
+        path = path.split("#", 1)[0]
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if limit and len(self.samples) >= limit:
+                    break
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                text = rec.get(field) or rec.get("text") or ""
+                if not text:
+                    continue
+                physics = rec.get("physics") or {}
+                load = (rec.get("load") or {}).get("force_n") or [0.0, 0.0, 0.0]
+                if skip_without_physics and not physics:
+                    continue
+                ids = self.tok.encode(text, bos=True, eos=True)[: seq_len + 1]
+                if len(ids) < 4:
+                    continue
+                pad = self.tok.pad_id
+                ids = ids + [pad] * (seq_len + 1 - len(ids))
+                mass_kg = float(physics.get("mass_g", 0.0)) / 1000.0
+                self.samples.append({
+                    "tokens": _torch.tensor(ids[:-1], dtype=_torch.long),
+                    "targets": _torch.tensor(ids[1:], dtype=_torch.long),
+                    "invariants": _torch.tensor(
+                        [0.0, 0.0, 0.0,
+                         mass_kg / PHYSICS_SCALE["mass_kg"],
+                         float(load[0]) / PHYSICS_SCALE["force_n"],
+                         float(load[1]) / PHYSICS_SCALE["force_n"],
+                         float(load[2]) / PHYSICS_SCALE["force_n"]],
+                        dtype=_torch.float32),
+                })
+        if not self.samples:
+            raise ValueError(f"в {path!r} нет пригодных записей с полем {field!r}")
+        self.stats = CorpusStats(len(self.samples),
+                                 sum(int((s["tokens"] != self.tok.pad_id).sum())
+                                     for s in self.samples),
+                                 len(self.samples), seq_len)
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, i: int):
+        return self.samples[i]
 
 
 def split_dataset(ds: Dataset, val_fraction: float = 0.1, seed: int = 0):

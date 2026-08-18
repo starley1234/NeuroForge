@@ -307,7 +307,8 @@ def _cmd_demo(args) -> int:
 def _cmd_train_lm(args) -> int:
     from .training.train_lm import train
     out = train(args.source, args.model_name, args.preset, args.resume, args.seq_len,
-                args.limit, val_source=args.val_source, tokenizer_path=args.tokenizer,
+                args.limit, val_source=args.val_source, physics=args.physics,
+                tokenizer_path=args.tokenizer,
                 registry_root=args.registry, promote=args.promote,
                 keep_best=not args.no_keep_best,
                 epochs=args.epochs, batch_size=args.batch_size, grad_accum=args.grad_accum,
@@ -516,6 +517,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="как часто считать валидацию (шагов)")
     p.add_argument("--patience", type=int, default=0,
                    help="ранняя остановка: сколько проверок терпеть без улучшения")
+    p.add_argument("--physics", action="store_true",
+                   help="подавать массу и нагрузку числом на общую шину (jsonl с physics)")
     p.add_argument("--val-source", default=None,
                    help="отдельный корпус для валидации (честный холдаут)")
     p.add_argument("--no-keep-best", action="store_true",

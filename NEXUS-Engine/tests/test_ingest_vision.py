@@ -149,3 +149,52 @@ def test_build_vision_dataset_manifest(tmp_path):
     for image in entry["images"]:
         assert os.path.exists(os.path.join(str(tmp_path / "vision"), image["image"]))
     assert "<scad>" in entry["text"]
+
+
+# ──────────────────────────────── физика как инварианты на общей шине
+def test_invariants_change_model_predictions():
+    """Масса и нагрузка должны влиять на выход, а не быть декорацией."""
+    import torch
+    from nexus import NexusConfig, NexusEngine
+    torch.manual_seed(0)
+    model = NexusEngine(NexusConfig.tiny()).eval()
+    tokens = torch.randint(4, 400, (2, 24))
+    plain = model(tokens=tokens, reason=False).logits
+    heavy = model(tokens=tokens, reason=False,
+                  invariants=torch.tensor([[0, 0, 0, 0.21, 0, 0, -0.35],
+                                           [0, 0, 0, 0.02, 0, 0, -0.05]])).logits
+    assert not torch.allclose(plain, heavy)
+
+
+def test_physics_dataset_yields_invariants(tmp_path):
+    import torch
+    from nexus.data.corpora import PhysicsLMDataset
+    path = tmp_path / "phys.jsonl"
+    path.write_text("\n".join(json.dumps(rec, ensure_ascii=False) for rec in [
+        {"text": "<task>кронштейн<scad>cube([20,20,4]);",
+         "physics": {"mass_g": 210.0}, "load": {"force_n": [0, 0, -350]}},
+        {"text": "<task>плита<scad>cube([30,30,3]);",
+         "physics": {"mass_g": 12.0}, "load": {"force_n": [0, 0, -20]}},
+    ]), encoding="utf-8")
+
+    ds = PhysicsLMDataset(str(path), seq_len=64)
+    assert len(ds) == 2
+    item = ds[0]
+    assert item["tokens"].shape == (64,) and item["targets"].shape == (64,)
+    assert item["invariants"].shape == (7,)
+    assert item["invariants"][3] == pytest.approx(0.21)      # 210 г → 0.21 кг
+    assert item["invariants"][6] == pytest.approx(-0.35)     # −350 Н → −0.35
+
+
+def test_training_with_physics_invariants(tmp_path):
+    from nexus.training.train_lm import train
+    path = tmp_path / "phys.jsonl"
+    path.write_text("\n".join(json.dumps({
+        "text": f"<task>деталь {i}<scad>cube([{10 + i},10,4]);",
+        "physics": {"mass_g": 10.0 * i}, "load": {"force_n": [0, 0, -50 * i]},
+    }, ensure_ascii=False) for i in range(1, 9)), encoding="utf-8")
+
+    out = train(f"jsonl:{path}", "core", "tiny", seq_len=64, physics=True,
+                registry_root=str(tmp_path / "reg"), max_steps=2, batch_size=2,
+                grad_accum=1, log_every=100)
+    assert out["metrics"]["val_loss"] > 0

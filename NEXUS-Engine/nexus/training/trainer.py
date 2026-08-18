@@ -96,8 +96,13 @@ def cosine_lr(step: int, total: int, base: float, warmup: int) -> float:
 
 def lm_loss(model: NexusEngine, batch: Dict[str, torch.Tensor],
             reason: bool = False, pad_id: int = 0) -> Dict[str, torch.Tensor]:
-    """Стандартная LM-задача: батч уже сдвинут (tokens → targets)."""
-    out = model(tokens=batch["tokens"], reason=reason)
+    """Стандартная LM-задача: батч уже сдвинут (tokens → targets).
+
+    Если в батче есть `invariants` (B, 7), они уходят на общую шину — модель
+    видит массу и нагрузку числом, а не только словами.
+    """
+    invariants = batch.get("invariants")
+    out = model(tokens=batch["tokens"], reason=reason, invariants=invariants)
     ce = F.cross_entropy(out.logits.reshape(-1, out.logits.shape[-1]),
                          batch["targets"].reshape(-1), ignore_index=pad_id)
     total = ce + (out.aux_loss if out.aux_loss is not None else 0.0)
