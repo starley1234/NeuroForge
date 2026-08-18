@@ -1,0 +1,12 @@
+{
+  "params": 1836672,
+  "train_loss": 3.4993,
+  "val_loss": 4.3537,
+  "val_ppl": 77.77,
+  "train_sec": 787.2,
+  "corpus_chars": 1223648,
+  "corpus_tokens": 446937,
+  "epochs": 5,
+  "seed": 42,
+  "lr": 0.002
+}

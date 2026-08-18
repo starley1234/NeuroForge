@@ -1,0 +1,16 @@
+{
+  "v1-diagonal": {
+    "params": 104784,
+    "train_sec": 36.5,
+    "query_acc_L24": 0.155,
+    "query_acc_L48_extrap": 0.1,
+    "query_acc_L96_extrap": 0.1
+  },
+  "v2-elast-holo": {
+    "params": 105170,
+    "train_sec": 542.6,
+    "query_acc_L24": 0.26,
+    "query_acc_L48_extrap": 0.18,
+    "query_acc_L96_extrap": 0.0133
+  }
+}

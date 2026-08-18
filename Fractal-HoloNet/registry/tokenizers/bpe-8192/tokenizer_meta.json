@@ -1,0 +1,38 @@
+{
+  "name": "bpe-8192",
+  "type": "byte-level-bpe",
+  "vocab_size": 8192,
+  "pad_token_id": 0,
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "unk_token_id": 3,
+  "sources": {
+    "russian_words.txt": {
+      "encoding": "cp1251",
+      "max_lines": 400000
+    },
+    "data_benchmark.txt": {
+      "encoding": "utf-8",
+      "full": true
+    }
+  },
+  "min_frequency": 2,
+  "compression": [
+    {
+      "sample": "русский текст",
+      "utf8_bytes": 225,
+      "bpe_tokens": 52
+    },
+    {
+      "sample": "английский текст",
+      "utf8_bytes": 90,
+      "bpe_tokens": 42
+    },
+    {
+      "sample": "пушкин",
+      "utf8_bytes": 115,
+      "bpe_tokens": 36
+    }
+  ],
+  "created_at": "2026-08-18T07:49:59Z"
+}

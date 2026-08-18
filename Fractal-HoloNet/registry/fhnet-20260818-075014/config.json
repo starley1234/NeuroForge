@@ -1,0 +1,13 @@
+{
+  "vocab_size": 8192,
+  "d_model": 128,
+  "n_layers": 4,
+  "d_ff": 256,
+  "min_freq": 0.001,
+  "max_freq": 3.141592653589793,
+  "dropout": 0.02,
+  "tie_word_embeddings": true,
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "pad_token_id": 0
+}

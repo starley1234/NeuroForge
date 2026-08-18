@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "active": "fhnet-20260818-075014",
+  "models": {
+    "fhnet-20260818-075014": {
+      "id": "fhnet-20260818-075014",
+      "name": "Fractal-HoloNet v1 (bpe, vocab 8192)",
+      "architecture": "fractal-holonet-v1",
+      "status": "trained",
+      "created_at": "2026-08-18T07:50:14Z",
+      "updated_at": "2026-08-18T08:03:23Z",
+      "git_commit": "117d9d5",
+      "tokenizer_type": "bpe",
+      "tokenizer_vocab": 8192,
+      "config_summary": {
+        "d_model": 128,
+        "n_layers": 4,
+        "d_ff": 256,
+        "vocab_size": 8192,
+        "block_size": 96
+      },
+      "metrics": {
+        "params": 1836672,
+        "train_loss": 3.4993,
+        "val_loss": 4.3537,
+        "val_ppl": 77.77,
+        "train_sec": 787.2,
+        "corpus_chars": 1223648,
+        "corpus_tokens": 446937,
+        "epochs": 5,
+        "seed": 42,
+        "lr": 0.002
+      },
+      "notes": "Обучение с нуля на BPE-8192 (русский корпус + TinyShakespeare)"
+    },
+    "legacy-base-ru-v1": {
+      "id": "legacy-base-ru-v1",
+      "name": "Fractal-HoloNet v1 (byte tokenizer, ru corpus)",
+      "architecture": "fractal-holonet-v1",
+      "status": "imported",
+      "created_at": "2026-08-18T07:50:40Z",
+      "updated_at": "2026-08-18T07:50:40Z",
+      "git_commit": "117d9d5",
+      "tokenizer_type": "byte",
+      "tokenizer_vocab": 260,
+      "config_summary": {
+        "d_model": 128,
+        "n_layers": 4,
+        "d_ff": 384,
+        "vocab_size": 300
+      },
+      "metrics": {
+        "params": 1023104,
+        "greedy_acc_corpus": 0.92
+      },
+      "notes": "Обучен train_russian.py (легаси-скрипт). Рассинхрон vocab: конфиг 300 vs словарь 260."
+    },
+    "legacy-signal-v1": {
+      "id": "legacy-signal-v1",
+      "name": "Fractal-HoloNet v1 multimodal (continuous signals)",
+      "architecture": "fractal-holonet-multimodal",
+      "status": "imported",
+      "created_at": "2026-08-18T07:50:40Z",
+      "updated_at": "2026-08-18T07:50:40Z",
+      "git_commit": "117d9d5",
+      "tokenizer_type": "",
+      "tokenizer_vocab": 0,
+      "config_summary": {
+        "d_model": 128,
+        "n_layers": 4,
+        "d_ff": 384,
+        "input_signal_dim": 1
+      },
+      "metrics": {
+        "params": 997729,
+        "forecast_mse_1step": 0.0274,
+        "anomaly_bce": 0.00019,
+        "forecast_mse_64step": 0.5
+      },
+      "notes": "Обучен train_multimodal.py на синтетике (ЭКГ-подобные сигналы)."
+    },
+    "elast-holo-v2-lm": {
+      "id": "elast-holo-v2-lm",
+      "name": "ELAST-HOLO v2 (ElasticHoloNet)",
+      "architecture": "elast-holo-v2",
+      "status": "imported",
+      "created_at": "2026-08-18T07:50:40Z",
+      "updated_at": "2026-08-18T07:50:40Z",
+      "git_commit": "117d9d5",
+      "tokenizer_type": "byte",
+      "tokenizer_vocab": 260,
+      "config_summary": {
+        "d_model": 64,
+        "n_layers": 4,
+        "d_ff": 192,
+        "vocab_size": 300,
+        "n_read_iters": 2,
+        "use_slow_memory": true
+      },
+      "metrics": {
+        "params": 430660,
+        "greedy_acc_corpus": 0.922,
+        "mqar_acc_L24_v2": 0.26,
+        "mqar_acc_L24_v1": 0.155,
+        "mqar_extrap_L48_v2": 0.18,
+        "mqar_extrap_L48_v1": 0.1
+      },
+      "notes": "ELAST-HOLO v2 (M1-M5, M7). См. research/ARCHITECTURE_V2.md."
+    }
+  }
+}

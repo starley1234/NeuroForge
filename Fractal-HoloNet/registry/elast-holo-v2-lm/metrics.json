@@ -1,0 +1,8 @@
+{
+  "params": 430660,
+  "greedy_acc_corpus": 0.922,
+  "mqar_acc_L24_v2": 0.26,
+  "mqar_acc_L24_v1": 0.155,
+  "mqar_extrap_L48_v2": 0.18,
+  "mqar_extrap_L48_v1": 0.1
+}

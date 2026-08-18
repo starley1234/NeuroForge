@@ -1,0 +1,23 @@
+{
+  "vocab_size": 300,
+  "d_model": 64,
+  "n_layers": 4,
+  "d_ff": 192,
+  "min_freq": 0.001,
+  "max_freq": 3.141592653589793,
+  "dt_min": 0.2,
+  "dt_max": 3.0,
+  "gamma_bias": 1.5,
+  "beta_bias": 0.0,
+  "use_phase_erase": true,
+  "use_slow_memory": true,
+  "slow_gamma": 0.99,
+  "slow_omega_ratio": 0.1,
+  "n_read_iters": 2,
+  "use_circulant": false,
+  "dropout": 0.0,
+  "tie_word_embeddings": true,
+  "bos_token_id": 1,
+  "eos_token_id": 2,
+  "pad_token_id": 0
+}

@@ -1,0 +1,6 @@
+{
+  "params": 997729,
+  "forecast_mse_1step": 0.0274,
+  "anomaly_bce": 0.00019,
+  "forecast_mse_64step": 0.5
+}
