@@ -25,6 +25,8 @@
 Сценарии применения и план развития — [docs/USE_CASES.md](docs/USE_CASES.md).
 Откуда берётся физика в обучении и запросах —
 [docs/PHYSICS_EXPLAINED.md](docs/PHYSICS_EXPLAINED.md).
+Кто уже делает похожее и где мы на этом фоне —
+[docs/LANDSCAPE.md](docs/LANDSCAPE.md).
 
 ```
 Уровень 1  Continuous Dynamic Encoders   AST-BPE · SSM-Audio/Video · B-Rep GNO · Point-SSM · Event-ODE · Neural-ODE био
@@ -407,7 +409,8 @@ nexus.sh / nexus.ps1        единая точка запуска (setup / quic
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
 docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · PHYSICS_EXPLAINED.md
-                            USE_CASES.md · INGEST.md · TRAINING_GUIDE.md · DATA_PLAN.md
+                            LANDSCAPE.md · USE_CASES.md · INGEST.md
+                            TRAINING_GUIDE.md · DATA_PLAN.md
                             architecture.md · training.md · api.md · operations.md
                             vram_budget.md · roadmap.md
 ```
