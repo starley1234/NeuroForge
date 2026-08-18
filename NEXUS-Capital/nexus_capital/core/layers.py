@@ -30,38 +30,41 @@ class SwiGLU(nn.Module):
         return self.w_down(F.silu(self.w_gate(x)) * self.w_up(x))
 
 
-def continuous_value_embedding(
-    values: torch.Tensor, d_out: int
-) -> torch.Tensor:
+def xval_number_embedding(values: torch.Tensor,
+                          num_embedding: torch.Tensor) -> torch.Tensor:
     """
-    Проецирует скалярные денежные величины в непрерывные тензоры стоимости
-    без дискретизации в токены. Использует случайные гауссовы признаки
-    (Random Fourier Features) поверх логарифма величины, что сохраняет
-    метрический масштаб: $1 000 000 и $1000 различаются как разные точки
-    континуума, а не как разные строки текста.
+    xVal-стиль внедрения вещественного числа (Golkar et al., 2023):
+    один обучаемый вектор u умножается на нормализованное число x.
+        h_num = x * u
+    Это сохраняет алгебраическую структуру: 2·u ≠ 1·u, в отличие от
+    дискретной токенизации. Значения пропускаются через sign·log1p
+    для устойчивости к масштабу и знаку (прибыль/убыток), что важно
+    для денежных величин с тяжёлыми хвостами.
 
-    values: (...,) тензор денежных величин (знаковые).
-    return: (..., d_out)
+    values:        (...,) скаляр
+    num_embedding: (d_out,) обучаемый «числовой» вектор
+    return:        (..., d_out)
     """
-    # log1p сохраняет относительный масштаб и устойчив к нулю
     x = torch.sign(values) * torch.log1p(values.abs())
-    orig_shape = x.shape
-    x = x.reshape(-1, 1)  # (N, 1)
+    return x.unsqueeze(-1) * num_embedding
 
-    if not hasattr(continuous_value_embedding, "_proj"):
-        continuous_value_embedding._proj = {}
-    key = (d_out, values.device, values.dtype)
-    proj = continuous_value_embedding._proj.get(key)
-    if proj is None:
-        weight = torch.randn(1, d_out, device=values.device,
-                             dtype=values.dtype) / (d_out ** 0.25)
-        bias = 2 * torch.pi * torch.rand(d_out, device=values.device,
-                                         dtype=values.dtype)
-        proj = (weight, bias)
-        continuous_value_embedding._proj[key] = proj
-    w, b = proj
-    emb = torch.cos(x @ w + b)
-    return emb.reshape(*orig_shape, d_out)
+
+# Совместимость со старым именем
+continuous_value_embedding = None
+
+
+class XValNumberEmbedding(nn.Module):
+    """
+    Обучаемый xVal-эмбеддинг для чисел: один вектор на специальный токен
+    <num>, который масштабируется вещественным значением.
+    """
+
+    def __init__(self, d_out: int):
+        super().__init__()
+        self.embedding = nn.Parameter(torch.randn(d_out) * 0.02)
+
+    def forward(self, values: torch.Tensor) -> torch.Tensor:
+        return xval_number_embedding(values, self.embedding)
 
 
 class ContinuousProjector(nn.Module):

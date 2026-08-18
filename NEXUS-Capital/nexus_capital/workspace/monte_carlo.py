@@ -94,4 +94,7 @@ class LatentMonteCarlo(nn.Module):
             "var": var,
             "expected_shortfall": es,
             "default_prob": pd,
+            # True, если SDE откалиброван по реальным возвратам — иначе
+            # метрики риска нельзя использовать как реальные оценки рынка.
+            "calibrated": bool(self.sde.calibrated.item()),
         }

@@ -18,6 +18,7 @@ from ..encoders import (
 from ..workspace.workspace import EconomicWorkspace
 from ..outputs.engine import DualOutputEngine
 from ..utility.losses import NexusLoss
+from ..utility.balance import FieldReconstructionHead
 
 
 class NexusCapital(nn.Module):
@@ -61,6 +62,9 @@ class NexusCapital(nn.Module):
             num_id=tokenizer.num_id,
         )
         self.fusion = MultimodalFusion(cfg.d_value)
+        # Голова реконструкции полей отчётности (для активного L_balance)
+        self.field_head = FieldReconstructionHead(
+            cfg.d_value, cfg.tabular_features)
 
         # Уровень 2
         self.bus = UnifiedValueBus(cfg)
@@ -173,14 +177,32 @@ class NexusCapital(nn.Module):
         out["workspace"] = ws
         out["invariants"] = bus_info["invariants"]
 
+        # Активный L_balance: реконструкция полей из латентности и проверка
+        # балансовых тождеств по ПРЕДСКАЗАННЫМ значениям.
+        balance_term = h.new_zeros(())
+        if fields is not None:
+            balance_term = (
+                0.5 * self.field_head.reconstruction_loss(
+                    h.squeeze(1), fields, field_mask)
+                + 1.0 * self.field_head.balance_loss(h.squeeze(1))
+            )
+            out["predicted_fields"] = self.field_head.predict_fields(
+                h.squeeze(1))
+            out["balance_loss"] = balance_term.detach()
+
         # Потери
-        if target_tokens is not None:
-            pred_loss = self.loss_fn.predictive_loss(
-                out["logits"], target_tokens)
+        if target_tokens is not None or fields is not None:
+            if target_tokens is not None:
+                pred_loss = self.loss_fn.predictive_loss(
+                    out["logits"], target_tokens)
+            else:
+                # Нет языковой цели — обучаем на реконструкции полей
+                pred_loss = balance_term.detach() * 0.0 + balance_term
             returns = ws["risk"]["pnl"]
             cost = out["economic"]["utility"]["cost"]
             total, logs = self.loss_fn(
                 pred_loss, returns=returns, cost=cost,
+                balance=balance_term,
                 aux_loss=bus_info["aux_loss"])
             out["loss"] = total
             out["loss_logs"] = logs

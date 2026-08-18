@@ -294,13 +294,29 @@ $$\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{pred}} - \lambda_1\,\text{Util
 
 ```bash
 pytest -q
-# 37 passed
+# 57 passed
 ```
 
-Покрытие: TTT-память, локальное внимание, маршрутизация MoE, инварианты Value
-Bus, Neural SDE (с backward), Монте-Карло VaR/ES, Nash bargaining, Бертран,
-ε-Nash, полный forward/backward модели, Data Flywheel, utility и GRPO,
-а также коннекторы реальных данных (Binance/SEC/FRED) в оффлайн-режиме.
+Покрытие: FastWeightMemory, локальное внимание, маршрутизация MoE, инварианты
+Value Bus, Neural SDE (с backward и калибровкой), Монте-Карло VaR/ES, Nash
+bargaining, Бертран, ε-Nash, полный forward/backward модели, Data Flywheel,
+utility и GRPO, коннекторы реальных данных (Binance/SEC/FRED) в оффлайне,
+xVal числа, FieldReconstructionHead и балансовые тождества, бейзлайны
+(zero/mean/AR(1)), хронологический сплит, проверка отсутствия утечки,
+двуязычный RU+EN токенизатор и текстовый энкодер.
+
+## 10. Методологические гарантии честности
+
+Чтобы метрики не были «цифрами ради цифр»:
+- **xVal** для чисел (мультипликативный эмбеддинг) вместо токенизации;
+- **FastWeightMemory** — явная аппроксимация TTT-Linear (Sun et al. 2024),
+  а не заявка на полный TTT;
+- **Neural SDE калибруется** на реальных возвратах (mean/std/df Стьюдента),
+  в выдаче есть флаг `calibrated`;
+- **хронологический** train/val сплит без утечки будущего;
+- **бейзлайны** zero/mean/AR(1) в скрипте обучения;
+- **балансовый loss** работает по предсказанным полям, а не входам;
+- **cross-attention** фьюжн вместо усреднения разнородных модальностей.
 
 ---
 

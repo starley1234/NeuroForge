@@ -19,7 +19,7 @@ import math
 import torch
 import torch.nn as nn
 
-from ..core.layers import continuous_value_embedding
+from ..core.layers import XValNumberEmbedding
 
 
 class FinancialTextEncoder(nn.Module):
@@ -39,8 +39,6 @@ class FinancialTextEncoder(nn.Module):
         self.pad_id = pad_id
         self.num_id = num_id
 
-        # Embedding предобученного словаря в собственной размерности,
-        # затем проекция в экономическое пространство d_value.
         self.d_embed = d_embed
         self.tok_emb = nn.Embedding(vocab_size, d_embed, padding_idx=pad_id)
         self.embed_proj = nn.Sequential(
@@ -49,12 +47,8 @@ class FinancialTextEncoder(nn.Module):
             nn.Linear(d_value, d_value, bias=False),
         )
 
-        # Проектор «числового значения в контексте»
-        self.num_proj = nn.Sequential(
-            nn.Linear(d_value, d_value),
-            nn.SiLU(),
-            nn.Linear(d_value, d_value),
-        )
+        # xVal: один обучаемый числовой вектор, масштабируемый значением числа
+        self.num_xval = XValNumberEmbedding(d_value)
 
         head_dim = max(1, d_value // n_heads)
         if d_value % n_heads != 0:
@@ -95,9 +89,7 @@ class FinancialTextEncoder(nn.Module):
         h = self.embed_proj(self.tok_emb(tokens))
 
         if number_values is not None and number_mask is not None:
-            num_emb = continuous_value_embedding(
-                number_values, self.d_value).to(h.dtype)
-            num_emb = self.num_proj(num_emb)
+            num_emb = self.num_xval(number_values)  # xVal: x * u
             h = torch.where(number_mask.unsqueeze(-1), num_emb, h)
 
         h = h + self.pos_emb[:T].unsqueeze(0)

@@ -1,40 +1,37 @@
 """
-Linear Fast-Weight Memory (Test-Time Training) для адаптации к рыночному режиму.
+Linear Fast-Weight Memory (онлайн-адаптация к рыночному режиму).
 
-Идея: рыночный режим (тренд/кризис/боковик) меняется за часы, а базовые веса
-модели обучаются на месяцах данных. Вместо переобучения вводится быстрая
-матрица M_t, которая обновляется на лету градиентом от ошибки рыночного
-прогноза:
+ВАЖНО о терминологии. Этот слой вдохновлён Test-Time Training
+(Sun et al., 2024, «Learning to Learn at Test Time»): скрытое состояние
+само является маленькой моделью и обновляется шагом градиентного спуска
+по self-supervised ошибке на каждом шаге последовательности.
 
-    M_t = (1 - alpha_t) M_{t-1} - eta_t ∇_M || M_{t-1} k_market - v_spread ||^2
+Данная реализация — облегчённая аппроксимация TTT-Linear, а не точная
+реализация Sun et al.:
+  * одношаговое обновление (mini-batch size 1) вместо многотокового;
+  * обучаемый per-head learning rate вместо отдельного мини-оптимизатора;
+  * low-rank факторизация памяти A·B для экономии VRAM;
+  * pull-back регуляризация к базовым весам для стабильности.
+Полноценный TTT-Linear требует кастомных ядер и параллельной рекуррентности
+(см. github.com/test-time-training/ttt-lm). Здесь приоритет —
+понятность, O(1) память на тик и возможность стриминга 100k+ событий.
 
-При линейном выходе v = M k градиент имеет замкнутую форму:
-
-    ∇_M ||M k - v||^2 = 2 (M k - v) k^T
-
-Поэтому обновление — O(d_mem * d_value) без обратного прохода графа и
-с константной памятью на тик. Это позволяет стримить 100k+ событий без
-роста VRAM.
+Обновление:
+    M_t = (1-α) M_{t-1} - η_t · q_t (M_{t-1}^T q_t - v_t)^T
+    v_pred = M_t^T q
 """
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .layers import RMSNorm
 
 
-class TTTRegimeMemory(nn.Module):
+class FastWeightMemory(nn.Module):
     """
-    Линейная быстрая память с self-contained состоянием M_t.
-
-    Параметры:
-        d_value: размерность латентного пространства.
-        d_mem:   внутренняя размерность памяти (ранг M).
-        rank:    если задан, M факторизуется как A B (low-rank) для экономии.
-        alpha:   коэффициент затухания старого состояния.
-        eta:     шаг быстрого градиента (learning rate на инфлайте).
+    Линейная быстрая память с self-contained состоянием M_t и обучаемым
+    per-head шагом η_t.
     """
 
     def __init__(
@@ -50,10 +47,10 @@ class TTTRegimeMemory(nn.Module):
         self.d_mem = d_mem
         self.rank = rank
         self.alpha = alpha
-        self.eta = eta
+        # базовый (медленный) learning rate; фактический обучаемый
+        self.log_eta = nn.Parameter(torch.tensor(eta).log())
 
-        if rank is not None and rank < d_mem:
-            # Факторизованная память M ≈ A B
+        if rank is not None and 0 < rank < d_mem:
             self.A = nn.Parameter(torch.randn(d_mem, rank) * 0.02)
             self.B = nn.Parameter(torch.randn(rank, d_value) * 0.02)
             self.factorized = True
@@ -67,18 +64,18 @@ class TTTRegimeMemory(nn.Module):
         self.out = nn.Linear(d_value, d_value, bias=False)
         self.norm = RMSNorm(d_value)
 
-        # Регистрируем ненулевой буфер состояния (M_t); инициализируется нулём
         self.register_buffer("state", None, persistent=False)
 
+    @property
+    def eta(self) -> torch.Tensor:
+        return self.log_eta.exp().clamp(max=1.0)
+
     def _base_M(self) -> torch.Tensor:
-        if self.factorized:
-            return self.A @ self.B
-        return self.M
+        return self.A @ self.B if self.factorized else self.M
 
     def init_state(self, batch: int, device: torch.device,
                    dtype: torch.dtype) -> torch.Tensor:
         M = self._base_M().to(dtype)
-        # M: (d_mem, d_value) -> (batch, d_mem, d_value)
         return M.unsqueeze(0).expand(batch, -1, -1).clone()
 
     def reset_state(self) -> None:
@@ -91,19 +88,6 @@ class TTTRegimeMemory(nn.Module):
         update: bool = True,
         state: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        x:      (B, T, d_value) или (B, d_value)
-        target: (B, T, d_value) — целевое значение v_spread для TTT-обновления.
-                Если None, в качестве цели используется проекция самого x
-                (self-supervised рыночный тик).
-        update: выполнять ли TTT-обновление памяти.
-        state:  внешнее состояние (B, d_mem, d_value). Если None,
-                используется внутреннее с инициализацией.
-
-        Возвращает:
-            out:   (B, T, d_value)
-            state: обновлённое быстрейшее состояние M_t
-        """
         squeeze = False
         if x.dim() == 2:
             x = x.unsqueeze(1)
@@ -122,53 +106,45 @@ class TTTRegimeMemory(nn.Module):
 
         M_t = state
         outputs = []
-
-        k_seq = self.k_proj(x)   # (B, T, d_mem)
-        q_seq = self.q_proj(x)   # (B, T, d_mem)
-        if target is None:
-            v_target = self.v_proj(x)  # self-supervised цель
-        else:
-            v_target = target
+        k_seq = self.k_proj(x)
+        q_seq = self.q_proj(x)
+        v_target = target if target is not None else self.v_proj(x)
+        eta = self.eta.to(dtype)
 
         for t in range(T):
-            k = k_seq[:, t]               # (B, d_mem)
-            q = q_seq[:, t]               # (B, d_mem)
-            v = v_target[:, t]            # (B, d_value)
-
-            # Считывание: v_pred = M_t^T q, где M_t (B, d_mem, d_value)
+            k = k_seq[:, t]
+            q = q_seq[:, t]
+            v = v_target[:, t]
+            # Нормализация q для численной стабильности градиента
+            q = F_layer_norm(q)
             v_pred = torch.bmm(M_t.transpose(1, 2),
-                               q.unsqueeze(-1)).squeeze(-1)     # (B, d_value)
-            out_t = self.out(self.norm(v_pred))
-            outputs.append(out_t)
-
+                               q.unsqueeze(-1)).squeeze(-1)
+            outputs.append(self.out(self.norm(v_pred)))
             if update:
-                # Замкнутый градиент: ∇_M ||M^T q - v||^2 = q (M^T q - v)^T
-                err = v_pred - v                                   # (B, d_value)
-                # M_t: (B, d_mem, d_value); q: (B, d_mem)
-                # err^T по dim-value: (B, d_value)
-                grad = q.unsqueeze(-1) * err.unsqueeze(1)          # (B, d_mem, d_value)
-                M_t = (1.0 - self.alpha) * M_t - self.eta * grad
-                # Дополнительно лёгкая pull-back регуляризация к базовым весам,
-                # чтобы быстрая память не улетала на бесконечность.
+                err = v_pred - v
+                # Градиент с нормализацией по величине состояния
+                grad = q.unsqueeze(-1) * err.unsqueeze(1)
+                M_t = (1.0 - self.alpha) * M_t - eta * grad
                 M_t = M_t + self.alpha * self._base_M().to(dtype).unsqueeze(0)
 
         out = torch.stack(outputs, dim=1)
-        if self.state is None or not self.training:
-            self.state = M_t.detach()
-        else:
-            self.state = M_t.detach()
-
+        self.state = M_t.detach()
         if squeeze:
             out = out.squeeze(1)
         return out, M_t
 
 
+# Лёгкий functional RMS-норм без отдельного модуля в hot-path
+def F_layer_norm(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+
+
+# Совместимость со старым именем
+TTTRegimeMemory = FastWeightMemory
+
+
 class RegimeClassifier(nn.Module):
-    """
-    Лёгкий классификатор рыночного режима по состоянию M_t.
-    Используется для индикации: 'trend_up', 'trend_down',
-    'sideways', 'liquidity_crisis'.
-    """
+    """Классификатор рыночного режима по состоянию M_t."""
 
     REGIMES = ["trend_up", "trend_down", "sideways", "liquidity_crisis"]
 
@@ -181,5 +157,4 @@ class RegimeClassifier(nn.Module):
         )
 
     def forward(self, M_t: torch.Tensor) -> torch.Tensor:
-        flat = M_t.reshape(M_t.shape[0], -1)
-        return self.net(flat)
+        return self.net(M_t.reshape(M_t.shape[0], -1))

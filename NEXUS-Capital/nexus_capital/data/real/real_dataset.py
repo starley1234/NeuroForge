@@ -45,6 +45,9 @@ class RealDataConfig:
     task: Literal["invariants", "risk", "pricing"] = "risk"
     processed_dir: str = "data/processed"
     max_samples: int = 10000
+    # Хронологический сплит: первые val_frac по времени — train, последние — val.
+    # Это критично для предотвращения утечки будущего.
+    val_frac: float = 0.1
 
 
 class RealMarketDataset(Dataset):
@@ -135,11 +138,36 @@ class RealMarketDataset(Dataset):
             self.targets = fwd.astype(np.float32)
 
     # ── Dataset API ───────────────────────────────────────────────
-    def __len__(self) -> int:
+    def _n_windows(self) -> int:
         if self.tick_features is None:
             return 0
-        n = len(self.tick_features) - self.cfg.tick_seq_len - 1
-        return max(0, min(n, self.cfg.max_samples))
+        return max(0, len(self.tick_features) - self.cfg.tick_seq_len - 1)
+
+    def __len__(self) -> int:
+        return min(self._n_windows(), self.cfg.max_samples)
+
+    def chronological_split(self, val_frac: float | None = None
+                            ) -> tuple["RealMarketDataset", "RealMarketDataset"]:
+        """
+        Хронологическое (не случайное!) разбиение train/val. Первые окна —
+        train, последние — val, без пересечения и без утечки будущего.
+        """
+        frac = self.cfg.val_frac if val_frac is None else val_frac
+        n = self._n_windows()
+        n_train = int(n * (1.0 - frac))
+        # Делаем легковесные обёртки, ссылающиеся на те же массивы
+        train_ds = _ChronoSubset(self, 0, n_train)
+        val_ds = _ChronoSubset(self, n_train, n)
+        return train_ds, val_ds
+
+    def raw_log_returns(self) -> np.ndarray | None:
+        """Сырые лог-доходности close->close для калибровки Neural SDE.
+        Это НЕ кумулятивный log-price, а именно покоординатные разности."""
+        if self.tick_features is None:
+            return None
+        # tick_features[:, 0] = log(close/base), поэтому доходности = diff
+        log_p = self.tick_features[:, 0]
+        return np.diff(log_p, prepend=log_p[0]).astype(np.float32)
 
     def __getitem__(self, idx: int) -> dict:
         s = idx
@@ -174,6 +202,21 @@ class RealMarketDataset(Dataset):
             sample["target_return"] = torch.tensor(
                 self.targets[e], dtype=torch.float32)
         return sample
+
+
+class _ChronoSubset(Dataset):
+    """Хронологический срез RealMarketDataset (не шафлит окна)."""
+
+    def __init__(self, parent: "RealMarketDataset", start: int, end: int):
+        self.parent = parent
+        self.start = start
+        self.end = max(start, end)
+
+    def __len__(self) -> int:
+        return self.end - self.start
+
+    def __getitem__(self, i: int) -> dict:
+        return self.parent[self.start + i]
 
 
 def collate_real(batch: list[dict]) -> dict:

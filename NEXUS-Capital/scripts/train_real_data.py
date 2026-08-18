@@ -52,6 +52,7 @@ from nexus_capital.data.real.text_dataset import (
 )
 from nexus_capital.data.real.corpus import CorpusConfig
 from nexus_capital.training.trainer import NexusTrainer, TrainConfig
+from nexus_capital.training.baselines import all_baselines
 from nexus_capital.workspace.monte_carlo import value_at_risk
 
 
@@ -126,9 +127,12 @@ def make_train_step(trainer: NexusTrainer, cfg: NexusConfig, device):
         returns = ws["risk"]["pnl"]
         cost = model.output.continuous.utility(h.squeeze(1))["cost"]
 
+        # L_balance по предсказанным полям из латентности
+        balance = model.field_head.balance_loss(h.squeeze(1))
+
         total, logs = model.loss_fn(
             pred_loss, returns=returns, cost=cost,
-            aux_loss=bus_info["aux_loss"])
+            balance=balance, aux_loss=bus_info["aux_loss"])
 
         trainer.opt.zero_grad(set_to_none=True)
         total.backward()
@@ -174,9 +178,11 @@ def evaluate(model, loader, device, n_batches: int = 10) -> dict:
         sharpe = 0.0
     pnl_t = torch.from_numpy(risks)
     var5 = float(value_at_risk(pnl_t, 0.05).mean())
+    # Честная проверка калибровки VaR по частоте пробитий
+    breach_rate = float((risks < -var5).mean()) if risks.size else 0.0
     return {
         "mse": mse, "sign_acc": sign_acc, "sharpe_pred": sharpe,
-        "var5_mean": var5,
+        "var5_mean": var5, "var_breach_rate": breach_rate,
         "pred_mean": float(preds.mean()), "pred_std": float(preds.std()),
     }
 
@@ -332,18 +338,25 @@ def main() -> None:
         print("Не удалось собрать датасет (проверьте доступ к интернету/источникам).")
         sys.exit(1)
 
-    n_train = int(len(dataset) * 0.9)
-    n_val = len(dataset) - n_train
-    train_ds, val_ds = torch.utils.data.random_split(
-        dataset, [n_train, n_val],
-        generator=torch.Generator().manual_seed(42))
+    # ХРОНОЛОГИЧЕСКИЙ сплит (по времени, без утечки будущего!)
+    train_ds, val_ds = dataset.chronological_split(dcfg.val_frac)
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, collate_fn=collate_real, drop_last=True)
     val_loader = DataLoader(
         val_ds, batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, collate_fn=collate_real)
-    print(f"  train={n_train}  val={n_val}  примеров")
+    print(f"  train={len(train_ds)}  val={len(val_ds)}  (хронологический сплит)")
+
+    # Бейзлайны на валидационной доходности
+    raw_rets = dataset.raw_log_returns()
+    if raw_rets is not None and len(raw_rets) > 200:
+        n_tr = int(len(raw_rets) * (1 - dcfg.val_frac))
+        val_rets = raw_rets[n_tr:]
+        print("  Бейзлайны на val-доходности:")
+        for b in all_baselines(val_rets):
+            print(f"    {b['name']:6s}  mse={b['mse']:.6e}  "
+                  f"sign_acc={b['sign_acc']:.3f}  sharpe={b['sharpe']:.3f}")
 
     device = torch.device(args.device)
 
@@ -357,6 +370,16 @@ def main() -> None:
     print(f"  d_value={mcfg.d_value}, layers={mcfg.n_layers}, "
           f"experts={mcfg.n_experts}/{mcfg.experts_per_token}, "
           f"mc_paths={mcfg.mc_paths}")
+
+    # Калибровка Neural SDE на реальных/синтетических возвратах.
+    # Без этого VaR/ES модели не являются оценками рынка.
+    if raw_rets is not None and len(raw_rets) > 50:
+        cal = model.workspace.mc.sde.calibrate_to_returns(
+            torch.from_numpy(raw_rets[:n_tr]))
+        print(f"  SDE откалиброван: emp_mean={cal['emp_mean']:.5f} "
+              f"emp_std={cal['emp_std']:.5f} df={cal['df']:.1f}")
+    else:
+        print("  SDE не калиброван (мало данных) — риск-метрики surrogate only.")
 
     # 3) Двуязычное LM-обучение (русский + английский)
     if args.text_steps > 0:

@@ -1,23 +1,32 @@
-"""Тесты ядра NEXUS-Capital: TTT, внимание, MoE, Value Bus, utility."""
+"""Тесты ядра NEXUS-Capital: FastWeight, внимание, MoE, Value Bus, xVal."""
 import pytest
 import torch
 
 from nexus_capital.core.config import small_config
-from nexus_capital.core.ttt_memory import TTTRegimeMemory
+from nexus_capital.core.ttt_memory import FastWeightMemory, TTTRegimeMemory
 from nexus_capital.core.attention import LocalFinancialAttention
 from nexus_capital.core.moe import FinancialSparseMoE
 from nexus_capital.core.value_bus import UnifiedValueBus
-from nexus_capital.core.layers import continuous_value_embedding, ContinuousProjector
+from nexus_capital.core.layers import (
+    XValNumberEmbedding, xval_number_embedding, ContinuousProjector,
+)
 
 
-def test_continuous_value_embedding_preserves_scale():
+def test_xval_embedding_preserves_scale_and_sign():
+    emb = XValNumberEmbedding(32)
     v = torch.tensor([1.0, 1000.0, 1_000_000.0, -500.0])
-    emb = continuous_value_embedding(v, 32)
-    assert emb.shape == (4, 32)
-    # Нуль даёт детерминированное представление
-    z = continuous_value_embedding(torch.tensor(0.0), 16)
-    assert z.shape == (16,)
-    assert torch.isfinite(emb).all()
+    out = emb(v)
+    assert out.shape == (4, 32)
+    assert torch.isfinite(out).all()
+    # xVal использует sign·log1p: большие числа сжимаются (тяжёлые хвосты)
+    small = xval_number_embedding(torch.tensor(100.0), emb.embedding.detach())
+    large = xval_number_embedding(torch.tensor(1_000_000.0), emb.embedding.detach())
+    # логарифм не даёт расти эмбеддингу линейно с числом
+    assert large.abs().mean() < 100 * small.abs().mean()
+    # знак числа меняет знак эмбеддинга
+    pos = xval_number_embedding(torch.tensor(5.0), emb.embedding.detach())
+    neg = xval_number_embedding(torch.tensor(-5.0), emb.embedding.detach())
+    assert torch.allclose(pos, -neg, atol=1e-6)
 
 
 def test_projector():
@@ -26,22 +35,23 @@ def test_projector():
     assert proj(x).shape == (3, 16)
 
 
-def test_ttt_memory_updates_state():
-    ttt = TTTRegimeMemory(d_value=32, d_mem=16, rank=8, alpha=0.9, eta=0.1)
+def test_fastweight_memory_updates_state():
+    mem = FastWeightMemory(d_value=32, d_mem=16, rank=8, alpha=0.9, eta=0.1)
     x = torch.randn(2, 5, 32)
-    out, state = ttt(x)
+    out, state = mem(x)
     assert out.shape == (2, 5, 32)
     assert state.shape == (2, 16, 32)
-    # При стриминге состояние должно меняться
-    out2, state2 = ttt(x, state=state)
+    out2, state2 = mem(x, state=state)
     assert not torch.allclose(state, state2, atol=1e-6)
 
 
-def test_ttt_memory_constant_memory_long_stream():
-    ttt = TTTRegimeMemory(d_value=16, d_mem=8, rank=4)
+def test_fastweight_memory_constant_memory_long_stream():
+    mem = FastWeightMemory(d_value=16, d_mem=8, rank=4)
     x = torch.randn(1, 100, 16)
-    out, _ = ttt(x)
+    out, _ = mem(x)
     assert out.shape == (1, 100, 16)
+    # Алиас обратной совместимости
+    assert TTTRegimeMemory is FastWeightMemory
 
 
 def test_local_attention():

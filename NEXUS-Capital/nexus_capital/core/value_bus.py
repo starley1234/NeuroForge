@@ -18,7 +18,7 @@ import torch.nn.functional as F
 
 from .config import NexusConfig
 from .layers import RMSNorm
-from .ttt_memory import TTTRegimeMemory
+from .ttt_memory import FastWeightMemory
 from .attention import LocalFinancialAttention
 from .moe import FinancialSparseMoE
 
@@ -53,7 +53,7 @@ class NexusCoreBlock(nn.Module):
     def __init__(self, cfg: NexusConfig, block_id: int):
         super().__init__()
         self.block_id = block_id
-        self.ttt = TTTRegimeMemory(
+        self.fast_memory = FastWeightMemory(
             d_value=cfg.d_value,
             d_mem=cfg.ttt_mem_dim,
             rank=cfg.ttt_rank,
@@ -82,7 +82,7 @@ class NexusCoreBlock(nn.Module):
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         # TTT быстрая память рыночного режима
         h = self.norm1(x)
-        ttt_out, state = self.ttt(h, target=target)
+        ttt_out, state = self.fast_memory(h, target=target)
         x = x + ttt_out
 
         # Локальное финансовое внимание
@@ -148,4 +148,4 @@ class UnifiedValueBus(nn.Module):
 
     def reset_ttt_state(self) -> None:
         for block in self.blocks:
-            block.ttt.reset_state()
+            block.fast_memory.reset_state()
