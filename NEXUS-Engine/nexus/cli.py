@@ -117,6 +117,17 @@ def _cmd_vram(args) -> int:
     return 0
 
 
+def _cmd_bench(args) -> int:
+    from .eval.bench import format_table, load_prompts, run_bench
+    prompts = load_prompts(args.prompts, args.limit) if args.prompts else None
+    results = run_bench(args.model, prompts, args.out, args.material,
+                        tuple(args.force), args.safety, args.grid, args.registry,
+                        args.device)
+    print()
+    print(format_table(results))
+    return 0
+
+
 def _cmd_ablate(args) -> int:
     from .eval.ablate import VARIANTS, format_table, run_ablation
     variants = args.variants.split(",") if args.variants else list(VARIANTS)
@@ -616,6 +627,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--serve", action="store_true", help="сразу поднять API после обучения")
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(fn=_cmd_quickstart)
+
+    p = sub.add_parser("bench", help="A/B генераторов на реальных запросах с проверкой физикой")
+    p.add_argument("--model", action="append", required=True,
+                   help="повторяемый: nexus:core:production | 'command:claude -p' | hf:MODEL | template")
+    p.add_argument("--prompts", default=None, help="файл с запросами (строки или JSONL)")
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--out", default="artifacts/bench")
+    p.add_argument("--material", default="pla")
+    p.add_argument("--force", type=float, nargs=3, default=[0.0, 0.0, -150.0])
+    p.add_argument("--safety", type=float, default=2.0)
+    p.add_argument("--grid", type=int, default=18)
+    p.add_argument("--registry", default="artifacts/registry")
+    p.add_argument("--device", default="auto")
+    p.set_defaults(fn=_cmd_bench)
 
     p = sub.add_parser("ablate", help="A/B: что даёт каждый блок архитектуры")
     p.add_argument("--variants", default=None,

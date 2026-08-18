@@ -198,3 +198,41 @@ def test_training_with_physics_invariants(tmp_path):
                 registry_root=str(tmp_path / "reg"), max_steps=2, batch_size=2,
                 grad_accum=1, log_every=100)
     assert out["metrics"]["val_loss"] > 0
+
+
+# ───────────────────────────────────────── A/B генераторов (nexus bench)
+def test_bench_compares_designers(tmp_path):
+    from nexus.eval.bench import format_table, run_bench
+    results = run_bench(["template", "template"],
+                        prompts=["Держатель кабеля 6 мм", "Заглушка 20 мм"],
+                        out_dir=str(tmp_path / "bench"), grid=10, verbose=False)
+    assert len(results) == 2
+    for r in results:
+        d = r.to_dict()
+        assert d["items"] == 2
+        assert 0.0 <= d["compile_rate"] <= 1.0
+        assert d["sec_per_item"] >= 0
+    assert os.path.exists(os.path.join(str(tmp_path / "bench"), "results.json"))
+    assert os.path.exists(os.path.join(str(tmp_path / "bench"), "samples.jsonl"))
+    assert "компилируется" in format_table(results)
+
+
+def test_bench_parses_designer_specs():
+    from nexus.eval.bench import parse_designer
+    name, designer = parse_designer("template")
+    assert name == "template" and hasattr(designer, "propose")
+    name, designer = parse_designer("command:echo cube([1,1,1]);")
+    assert name.startswith("command:")
+    with pytest.raises(ValueError):
+        parse_designer("magic:whatever")
+
+
+def test_bench_loads_prompts_from_file(tmp_path):
+    from nexus.eval.bench import load_prompts
+    plain = tmp_path / "p.txt"
+    plain.write_text("клипса 6 мм\nзаглушка 20 мм\n", encoding="utf-8")
+    assert load_prompts(str(plain)) == ["клипса 6 мм", "заглушка 20 мм"]
+
+    js = tmp_path / "p.jsonl"
+    js.write_text(json.dumps({"spec": "фланец"}, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert load_prompts(str(js)) == ["фланец"]
