@@ -246,6 +246,29 @@ def _cmd_gen_math(args) -> int:
     return 0
 
 
+def _cmd_ingest(args) -> int:
+    from .data.ingest import ingest
+    stats = ingest(args.source, args.out, table=args.table, limit=args.limit,
+                   statuses=args.statuses.split(",") if args.statuses else None,
+                   grid=args.grid, material=args.material, force_n=tuple(args.force),
+                   validate=not args.no_validate,
+                   enrich_command=args.enrich_command.split() if args.enrich_command else None,
+                   val_fraction=args.val_fraction)
+    print(json.dumps(stats.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
+def _cmd_render_dataset(args) -> int:
+    from .data.vision import build_vision_dataset, load_jsonl
+    records = load_jsonl(args.input)
+    stats = build_vision_dataset(records, args.out, size=args.size, backend=args.backend,
+                                 views=args.views.split(",") if args.views else None,
+                                 resolution=args.resolution, with_stl=args.stl,
+                                 limit=args.limit)
+    print(json.dumps(stats.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
 def _cmd_collect(args) -> int:
     from .data.collect import collect, default_tasks, make_designer
     kwargs = {"seed": args.seed, "device": args.device, "name": args.model_name,
@@ -651,6 +674,35 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--registry", default="artifacts/registry")
     p.add_argument("--device", default="auto")
     p.set_defaults(fn=_cmd_collect)
+
+    p = sub.add_parser("ingest", help="импорт своих данных «ТЗ → OpenSCAD» с проверкой")
+    p.add_argument("source", help="sql:dump.sql | jsonl:file | csv:file | mysql://user:pass@host/db")
+    p.add_argument("--out", default="artifacts/ingest")
+    p.add_argument("--table", default="stl_items")
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--statuses", default=None,
+                   help="через запятую, например: готово,в работе")
+    p.add_argument("--grid", type=int, default=20, help="разрешение проверки геометрии")
+    p.add_argument("--material", default="pla")
+    p.add_argument("--force", type=float, nargs=3, default=[0.0, 0.0, -200.0])
+    p.add_argument("--no-validate", action="store_true", help="без проверки движком")
+    p.add_argument("--enrich-command", default=None,
+                   help="CLI внешней LLM для дописывания ТЗ, напр. 'claude -p'")
+    p.add_argument("--val-fraction", type=float, default=0.1)
+    p.set_defaults(fn=_cmd_ingest)
+
+    p = sub.add_parser("render-dataset", help="рендер деталей в картинки (визуальная модальность)")
+    p.add_argument("--input", default="artifacts/ingest/dataset.jsonl")
+    p.add_argument("--out", default="artifacts/vision")
+    p.add_argument("--size", type=int, default=384)
+    p.add_argument("--backend", choices=["auto", "openscad", "internal"], default="auto")
+    p.add_argument("--views", default=None,
+                   help="через запятую: iso,front,right,top,iso_back,bottom")
+    p.add_argument("--resolution", type=int, default=56,
+                   help="воксельная сетка для встроенного рендера")
+    p.add_argument("--stl", action="store_true", help="дополнительно сохранять STL")
+    p.add_argument("--limit", type=int, default=None)
+    p.set_defaults(fn=_cmd_render_dataset)
 
     p = sub.add_parser("mcp", help="MCP-сервер: движок как инструменты для внешней LLM")
     p.add_argument("--workdir", default="artifacts/mcp")

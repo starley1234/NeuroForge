@@ -1,0 +1,151 @@
+import json
+import os
+
+import numpy as np
+import pytest
+
+SQL_DUMP = """
+INSERT INTO `stl_items` (`stl_item_id`, `stl_item_status`, `stl_item_code_basis`, `stl_item_code`, `stl_item_favorite`, `stl_item_public`, `stl_item_img`, `stl_item_update`, `user_id`, `guest_id`, `answer_id`, `created_at`) VALUES
+(7078, 'в работе', 'Дискообразный корпус с низким профилем.', '// корпус \\'широкий\\'\\n$fn=32;\\nouter_d = 60; // внешний диаметр\\nheight = 14;\\ndifference() {\\n  cylinder(d=outer_d, h=height);\\n  translate([0,0,2]) cylinder(d=outer_d-6, h=height);\\n}', 0, 0, 'img_7078.png', '2026-08-17 22:32:18', 1, 4808, 'gen-1', '2026-08-17 22:23:16'),
+(7077, 'готово', 'Прижимной фланец для труб.', '/* фланец */\\n$fn=42;\\nflange_d = 110.0;\\nthk = 12.0; // толщина диска\\ndifference() {\\n  cylinder(d=flange_d, h=thk);\\n  translate([0,0,-1]) cylinder(d=32, h=thk+2);\\n}', 0, 0, NULL, '2026-08-17 22:20:03', 1, 4808, 'gen-2', '2026-08-17 22:19:23'),
+(7076, 'в работе', 'Битый скрипт.', 'difference() { cube([10,10,10) ; cylinder(h=5, r=2); } // не закрыта скобка', 0, 0, NULL, '2026-08-17 22:15:00', 1, 4808, 'gen-3', '2026-08-17 22:14:00');
+"""
+
+
+# ───────────────────────────────────────────────────────── разбор дампа
+def test_parse_sql_dump_handles_escapes_and_null():
+    from nexus.data.ingest import parse_sql_dump
+    rows = parse_sql_dump(SQL_DUMP, table="stl_items")
+    assert len(rows) == 3
+    assert rows[0][0] == 7078 and rows[0][1] == "в работе"
+    code = rows[0][3]
+    assert "\n" in code and "'широкий'" in code        # \n и \' раскрыты
+    assert code.count("\\n") == 0
+    assert rows[1][6] is None                          # NULL распознан
+    assert rows[0][6] == "img_7078.png"
+
+
+def test_load_records_normalizes_fields(tmp_path):
+    from nexus.data.ingest import load_records
+    path = tmp_path / "dump.sql"
+    path.write_text(SQL_DUMP, encoding="utf-8")
+    records = list(load_records(f"sql:{path}"))
+    assert len(records) == 3
+    first = records[0]
+    assert set(first) >= {"spec", "code", "image", "status", "item_id"}
+    assert first["spec"].startswith("Дискообразный")
+    assert "cylinder" in first["code"]
+
+
+def test_load_records_from_jsonl(tmp_path):
+    from nexus.data.ingest import load_records
+    path = tmp_path / "items.jsonl"
+    path.write_text(json.dumps({"description": "плита", "scad": "cube([10,10,2]);"},
+                               ensure_ascii=False) + "\n", encoding="utf-8")
+    rec = next(iter(load_records(f"jsonl:{path}")))
+    assert rec["spec"] == "плита" and rec["code"].startswith("cube")
+
+
+def test_extract_parameters_reads_header():
+    from nexus.data.ingest import extract_parameters
+    params = extract_parameters(
+        "outer_d = 60; // внешний диаметр\nheight = 14;\n"
+        "big = [for (i=[0:100]) i];\ncube([1,1,1]);")
+    names = {p["name"]: p for p in params}
+    assert names["outer_d"]["value"] == "60"
+    assert names["outer_d"]["comment"] == "внешний диаметр"
+    assert "big" not in names                          # генераторы отсеиваются
+
+
+# ─────────────────────────────────────────────────────────── импорт
+def test_ingest_validates_dedupes_and_splits(tmp_path):
+    from nexus.data.ingest import ingest
+    dump = tmp_path / "dump.sql"
+    dump.write_text(SQL_DUMP + SQL_DUMP, encoding="utf-8")   # дубли специально
+    out = str(tmp_path / "out")
+    stats = ingest(f"sql:{dump}", out, grid=12, verbose=False, val_fraction=0.0)
+
+    assert stats.total == 6
+    assert stats.duplicates == 3                        # второй проход — копии
+    assert stats.accepted == 2                          # битый скрипт отброшен
+    assert stats.rejected.get("compile_error") == 1
+    assert stats.mean_reward > 0
+
+    records = [json.loads(line) for line in
+               open(os.path.join(out, "dataset.jsonl"), encoding="utf-8")]
+    assert len(records) == 2
+    rec = records[0]
+    assert "<task>" in rec["text"] and "<scad>" in rec["text"]
+    assert rec["physics"]["mass_g"] > 0 and rec["params"]
+    assert os.path.exists(os.path.join(out, "rejects.jsonl"))
+    assert os.path.exists(os.path.join(out, "stats.json"))
+
+
+def test_ingest_filters_by_status(tmp_path):
+    from nexus.data.ingest import ingest
+    dump = tmp_path / "dump.sql"
+    dump.write_text(SQL_DUMP, encoding="utf-8")
+    stats = ingest(f"sql:{dump}", str(tmp_path / "out2"), statuses=["готово"],
+                   grid=12, verbose=False, val_fraction=0.0)
+    assert stats.accepted == 1 and stats.rejected.get("status") == 2
+
+
+def test_ingested_corpus_is_trainable(tmp_path):
+    from nexus.data.corpora import PackedLMDataset
+    from nexus.data.ingest import ingest
+    dump = tmp_path / "dump.sql"
+    dump.write_text(SQL_DUMP, encoding="utf-8")
+    out = str(tmp_path / "out3")
+    ingest(f"sql:{dump}", out, grid=12, verbose=False, val_fraction=0.0)
+    ds = PackedLMDataset(f"jsonl:{os.path.join(out, 'dataset.jsonl')}#text",
+                         seq_len=64, min_blocks=2)
+    assert len(ds) >= 2 and ds[0]["tokens"].shape == (64,)
+
+
+# ────────────────────────────────────────────── визуальная модальность
+def test_png_write_and_read_roundtrip(tmp_path):
+    from nexus.data.vision import load_image, write_png
+    rng = np.random.default_rng(0)
+    image = rng.integers(0, 255, (16, 24, 3), dtype=np.uint8)
+    path = write_png(str(tmp_path / "test.png"), image)
+    back = load_image(path)
+    assert back.shape == (16, 24, 3)
+    assert np.allclose(back * 255.0, image.astype(np.float32), atol=1.0)
+
+
+def test_internal_renderer_draws_geometry(tmp_path):
+    from nexus.data.vision import load_image, render_internal
+    code = "difference(){cylinder(d=60,h=12,$fn=32); translate([0,0,-1]) cylinder(d=20,h=20);}"
+    path = render_internal(code, str(tmp_path / "iso.png"), (55.0, 25.0), size=96,
+                           resolution=36)
+    assert path and os.path.exists(path)
+    img = load_image(path)
+    lit = (img.max(axis=2) > 0.25).sum()
+    assert 200 < lit < 96 * 96                          # деталь видна, но не весь кадр
+
+
+def test_internal_renderer_rejects_broken_code(tmp_path):
+    from nexus.data.vision import render_internal
+    assert render_internal("cube([1,1,1)", str(tmp_path / "bad.png"), size=64) is None
+
+
+def test_build_vision_dataset_manifest(tmp_path):
+    from nexus.data.vision import build_vision_dataset
+    records = [
+        {"item_id": 1, "spec": "плита", "code": "cube([30,20,4], center=true);",
+         "params": [{"name": "a", "value": "30", "comment": ""}]},
+        {"item_id": 2, "spec": "втулка",
+         "code": "difference(){cylinder(d=30,h=10,$fn=24); cylinder(d=12,h=30,center=true);}"},
+    ]
+    stats = build_vision_dataset(records, str(tmp_path / "vision"), size=64,
+                                 backend="internal", views=["iso", "top"],
+                                 resolution=32, verbose=False)
+    assert stats.items == 2 and stats.images == 4 and stats.failed == 0
+    lines = [json.loads(x) for x in
+             open(os.path.join(str(tmp_path / "vision"), "manifest.jsonl"), encoding="utf-8")]
+    assert len(lines) == 2
+    entry = lines[0]
+    assert {i["view"] for i in entry["images"]} == {"iso", "top"}
+    for image in entry["images"]:
+        assert os.path.exists(os.path.join(str(tmp_path / "vision"), image["image"]))
+    assert "<scad>" in entry["text"]

@@ -48,6 +48,17 @@
 
 ---
 
+## 1.1 Собственные данные сайта — приоритет №0
+
+Если у вас уже есть база пар «ТЗ → OpenSCAD → рендер» (как таблица `stl_items`),
+это ценнее любого публичного датасета: настоящие запросы людей, ваш домен, ваш
+стиль кода. Импорт и рендер — [INGEST.md](INGEST.md):
+
+```bash
+nexus ingest sql:stl_items.sql --out artifacts/ingest
+nexus render-dataset --input artifacts/ingest/dataset.jsonl --out artifacts/vision
+```
+
 ## 2. Что делаем сами (уже реализовано)
 
 ### 2.1 Маховик OpenSCAD → FEM

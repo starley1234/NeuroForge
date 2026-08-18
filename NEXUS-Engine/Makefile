@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: help install test demo flywheel datasets gen-math collect mcp pretrain fno rl train-lm distill guide eval ablate serve registry needle vram
+.PHONY: help install test demo flywheel ingest vision datasets gen-math collect mcp pretrain fno rl train-lm distill guide eval ablate serve registry needle vram
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/'
@@ -25,6 +25,12 @@ fno:  ## фаза 2: обучение FNO-суррогата FEM
 
 rl:  ## фаза 4: Physics-RL (GRPO)
 	$(PY) -m nexus.cli rl --steps 10
+
+ingest:  ## импорт своих данных: make ingest SRC=sql:dump.sql
+	$(PY) -m nexus.cli ingest $(SRC) --out artifacts/ingest
+
+vision:  ## рендер картинок для визуальной модальности
+	$(PY) -m nexus.cli render-dataset --input artifacts/ingest/dataset.jsonl --out artifacts/vision
 
 datasets:  ## каталог открытых датасетов и рекомендованные миксы
 	$(PY) -m nexus.cli datasets list

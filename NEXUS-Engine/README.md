@@ -54,7 +54,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 120 тестов, ~40 с на CPU
+pytest -q                        # 130 тестов, ~55 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -81,6 +81,8 @@ python -m nexus.cli demo         # сквозная демонстрация в�
 nexus doctor                             # диагностика окружения и самопроверка
 nexus quickstart --scale small           # всё сразу: данные → токенизатор → обучение → приёмка
 nexus info --preset rtx5060 --build      # конфиг, число параметров, бюджет VRAM, доступные бэкенды
+nexus ingest sql:stl_items.sql           # свой корпус «ТЗ → OpenSCAD» с проверкой
+nexus render-dataset --input artifacts/ingest/dataset.jsonl   # картинки для vision
 nexus datasets list                      # каталог открытых датасетов и лицензии
 nexus gen-math -n 50000                  # верифицированная инженерная математика
 nexus collect --teacher command --command "claude -p" -n 500   # дистилляция с проверкой
@@ -141,6 +143,13 @@ nexus mcp --list-tools                  # движок как MCP-инструм
 nexus collect --teacher command --command "claude -p" -n 500 --attempts 3
 ```
 
+* **Импорт своих данных** (`nexus ingest`): дамп MySQL / прямое подключение / JSONL /
+  CSV → дедупликация, валидация движком (компиляция, manifold, масса, МКЭ),
+  таблица параметров, опциональное дописывание ТЗ внешней LLM, разделение
+  train/val. Подробно — [docs/INGEST.md](docs/INGEST.md).
+* **Выборка для визуальной модальности** (`nexus render-dataset`): 6 ракурсов
+  через OpenSCAD CLI либо встроенный растеризатор (numpy + свой PNG, без Pillow),
+  манифест «картинка ↔ код ↔ ТЗ ↔ физика», опционально STL.
 * **Каталог** (`nexus/data/catalog.py`): CAD-Coder (Apache-2.0, 250k), Zero-to-CAD-1M,
   BenchCAD, thingiverse-openscad, SimJEB/DeepJEB (FEM-метки), OpenMathReasoning,
   OpenR1-Math — с размерами, лицензиями и честными комментариями.
@@ -379,6 +388,7 @@ nexus/
   fem/                      hex_fem.py (МКЭ, matrix-free CG) · solver.py · calculix.py
   data/                     tokenizer.py · bpe.py (обучаемый BPE) · corpora.py
                             catalog.py (открытые датасеты) · mathgen.py (математика)
+                            ingest.py (импорт своих данных) · vision.py (рендер, PNG)
                             collect.py (дистилляция с проверкой) · flywheel.py · dataset.py
   mcp/                      server.py — MCP stdio-сервер (движок как инструменты)
   quickstart.py             сквозной сценарий «одной командой»
@@ -388,14 +398,14 @@ nexus/
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
   eval/                     suite.py (quality gate) · ablate.py (A/B блоков)
                             needle.py · vram.py
-tests/                      120 тестов: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      130 тестов: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
 docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · USE_CASES.md
-                            TRAINING_GUIDE.md · DATA_PLAN.md
+                            INGEST.md · TRAINING_GUIDE.md · DATA_PLAN.md
                             architecture.md · training.md · api.md · operations.md
                             vram_budget.md · roadmap.md
 ```
