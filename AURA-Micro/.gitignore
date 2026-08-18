@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+dist/
+build/
+artifacts/*.pt
+artifacts/*.onnx
+!artifacts/.gitkeep
+data/esc50/
+*.zip
