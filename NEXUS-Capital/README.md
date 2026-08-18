@@ -100,17 +100,46 @@ NEXUS-Capital/
 cd NEXUS-Capital
 pip install -r requirements.txt
 
-# Полный прогон всех 4 уровней на CPU (синтетические данные)
-python examples/demo_pipeline.py
+# Одна команда — полная проверка системы (окружение, модель, тесты, обучение)
+python verify.py            # ~50 c, пишет verify_report.log
+python verify.py --quick    # ~10 c, без обучения
 
-# Латентный Монте-Карло: распределение P&L, VaR, ES
-python examples/demo_monte_carlo.py
+# Или через Make
+make install
+make verify
+make quick
 
-# Цикл обучения (Фазы 1–3) на синтетике
-python scripts/train.py --steps 100 --batch-size 4
+# Веб-UI и API
+make serve                 # http://127.0.0.1:8000
+```
 
-# Тесты
-pytest -q
+### Инструменты запуска
+
+| Команда | Что делает |
+|---|---|
+| `python verify.py` | Полная верификация с логом: окружение, токенизатор RU/EN, сборка модели, обратный проход, калибровка SDE, 57 юнит-тестов, короткое обучение |
+| `python verify.py --quick` | То же без этапа обучения |
+| `python serve.py` | FastAPI-сервер + веб-UI (риск, ценообразование, переговоры, поля отчётности) |
+| `make test` | Прогон всех 57 юнит-тестов |
+| `make train` | Короткое обучение на синтетике |
+| `make train-real` | Обучение на реальных данных Binance/FRED |
+| `make demo` | Демо всех 4 уровней |
+| `python scripts/train_real_data.py` | Обучение с аргументами (`--help`) |
+
+`verify.py` печатает по каждому этапу `✅/❌` и пишет `verify_report.log` —
+пришлите этот лог, чтобы быстро понять, что и где не работает.
+
+### Веб-UI (одна HTML-страница, без сборки)
+
+После `python serve.py` откройте `http://127.0.0.1:8000`:
+- вкладка **Риск** — текст (EN/RU) и поля отчётности → E[P&L], VaR, ES, P(default);
+- вкладка **Цена** — Бертран: себестоимость, конкурент, эластичность → оптимальная цена;
+- вкладка **Переговоры** — Nash bargaining между продавцом и покупателем.
+
+REST API:
+```bash
+curl -X POST localhost:8000/api/risk -H 'Content-Type: application/json' \
+  -d '{"text":"Revenue grew 12% to $1,420.5 million.","fields":{"revenue":1420.5}}'
 ```
 
 ## 5. Обучение на реальных открытых данных
