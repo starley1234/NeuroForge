@@ -22,6 +22,7 @@
 Пошагово и с разбором проблем — [docs/QUICKSTART.md](docs/QUICKSTART.md).
 Что здесь на самом деле построено и что из этого измерено —
 [docs/WHAT_WE_BUILT.md](docs/WHAT_WE_BUILT.md).
+Сценарии применения и план развития — [docs/USE_CASES.md](docs/USE_CASES.md).
 
 ```
 Уровень 1  Continuous Dynamic Encoders   AST-BPE · SSM-Audio/Video · B-Rep GNO · Point-SSM · Event-ODE · Neural-ODE био
@@ -393,8 +394,8 @@ nexus.sh / nexus.ps1        единая точка запуска (setup / quic
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · TRAINING_GUIDE.md
-                            DATA_PLAN.md
+docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · USE_CASES.md
+                            TRAINING_GUIDE.md · DATA_PLAN.md
                             architecture.md · training.md · api.md · operations.md
                             vram_budget.md · roadmap.md
 ```
