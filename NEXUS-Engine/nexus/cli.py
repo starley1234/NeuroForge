@@ -285,6 +285,16 @@ def _cmd_ingest(args) -> int:
     return 0
 
 
+def _cmd_export_sft(args) -> int:
+    from .data.sft import export_sft
+    stats = export_sft(args.source, args.out, with_physics=not args.no_physics,
+                       with_repair=not args.no_repair, val_fraction=args.val_fraction,
+                       limit=args.limit)
+    print("\nДальше: python scripts/train_lora.py --data %s --preset qwen3-coder-8b"
+          % args.out)
+    return 0 if stats.exported else 1
+
+
 def _cmd_render_dataset(args) -> int:
     from .data.vision import build_vision_dataset, load_jsonl
     records = load_jsonl(args.input)
@@ -757,6 +767,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="CLI внешней LLM для дописывания ТЗ, напр. 'claude -p'")
     p.add_argument("--val-fraction", type=float, default=0.1)
     p.set_defaults(fn=_cmd_ingest)
+
+    p = sub.add_parser("export-sft", help="экспорт корпуса в chat-формат для LoRA-дообучения")
+    p.add_argument("--source", action="append", required=True,
+                   help="повторяемый: jsonl:artifacts/ingest/dataset.jsonl")
+    p.add_argument("--out", default="artifacts/sft")
+    p.add_argument("--val-fraction", type=float, default=0.05)
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--no-physics", action="store_true",
+                   help="не добавлять строку с массой и запасом прочности")
+    p.add_argument("--no-repair", action="store_true",
+                   help="не делать примеры «замечание → исправленный код»")
+    p.set_defaults(fn=_cmd_export_sft)
 
     p = sub.add_parser("render-dataset", help="рендер деталей в картинки (визуальная модальность)")
     p.add_argument("--input", default="artifacts/ingest/dataset.jsonl")

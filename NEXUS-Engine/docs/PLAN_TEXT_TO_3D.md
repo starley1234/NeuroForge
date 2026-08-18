@@ -128,11 +128,13 @@ nexus bench --model "command:<ваш вызов большой LLM>" --prompts r
 ## 5. Шаг 4 (недели 2–4): своя модель, продуктовый трек
 
 ```bash
-# 1. словарь на своём корпусе
-nexus train-tokenizer --source "jsonl:artifacts/ingest/dataset.jsonl#text" --vocab-size 16384
+# 1. экспорт в chat-формат (с физикой в ответе и примерами ремонта)
+nexus export-sft --source jsonl:artifacts/ingest/dataset.jsonl \
+                 --source jsonl:artifacts/collected/dataset.jsonl --out artifacts/sft
 
-# 2. LoRA поверх открытой модели-кодера (внешний скрипт, веса ваши)
-#    датасет: artifacts/ingest/dataset.jsonl, формат «промпт → код»
+# 2. LoRA поверх современной открытой модели — веса ваши (см. docs/LORA.md)
+python scripts/train_lora.py --data artifacts/sft --preset qwen3-coder-8b \
+       --epochs 3 --batch-size 2 --grad-accum 8 --seq-len 4096
 
 # 3. сравнение с большой LLM на ваших же запросах
 nexus bench --model "command:python serve_lora.py" \

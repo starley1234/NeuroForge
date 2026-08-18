@@ -333,3 +333,59 @@ def test_optimizer_rejects_broken_input():
     from nexus.optimize import optimize
     with pytest.raises(ValueError, match="не собирается|силовых"):
         optimize("thickness = 3; cube([10,10,10)", budget=6, grid=8, verbose=False)
+
+
+# ────────────────────── экспорт в chat-формат для дообучения готовых LLM
+def test_export_sft_builds_chat_messages(tmp_path):
+    from nexus.data.sft import export_sft
+    src = tmp_path / "corpus.jsonl"
+    src.write_text("\n".join(json.dumps(rec, ensure_ascii=False) for rec in [
+        {"spec": "<task>кронштейн 300 Н",
+         "code": "// кронштейн\nw = 40;\nt = 6;\ndifference(){ cube([w,w,t], center=true);"
+                 " cylinder(h=20, r=4, center=true); }",
+         "physics": {"mass_g": 41.2, "safety_factor": 3.1, "min_wall_mm": 2.4}},
+        {"spec": "плита", "code": "x", "physics": {}},          # слишком короткий
+    ]), encoding="utf-8")
+
+    out = str(tmp_path / "sft")
+    stats = export_sft([f"jsonl:{src}"], out, val_fraction=0.0, verbose=False)
+    assert stats.exported == 1 and stats.skipped.get("too_short") == 1
+
+    line = json.loads(open(os.path.join(out, "train.jsonl"), encoding="utf-8").readline())
+    roles = [m["role"] for m in line["messages"]]
+    assert roles == ["system", "user", "assistant"]
+    answer = line["messages"][2]["content"]
+    assert "```openscad" in answer and "cube([w,w,t]" in answer
+    assert "масса 41.2 г" in answer and "запас прочности 3.10" in answer
+
+
+def test_export_sft_creates_repair_examples(tmp_path):
+    from nexus.data.sft import export_sft, repair_messages
+    record = {
+        "spec": "<task>крючок 5 кг",
+        "code": "// крючок\nthickness = 3;\ncube([20,20,thickness], center=true);"
+                " translate([0,0,5]) cylinder(h=10, r=3);",
+        "trajectory": [
+            {"attempt": 0, "reward": 1.0, "feedback": None},
+            {"attempt": 1, "reward": 4.2, "feedback": "слишком тонкие стенки: 0.9 мм"},
+        ],
+    }
+    repair = repair_messages(record)
+    assert repair and "0.9 мм" in repair["messages"][1]["content"]
+
+    src = tmp_path / "traj.jsonl"
+    src.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    stats = export_sft([f"jsonl:{src}"], str(tmp_path / "sft2"), val_fraction=0.0,
+                       verbose=False)
+    assert stats.repair_pairs == 1 and stats.exported == 2   # обычный + ремонтный
+
+
+def test_lora_scripts_are_valid_and_documented():
+    """Скрипты должны запускаться хотя бы с --help без установленного torch-стека."""
+    import subprocess
+    import sys
+    for script in ("scripts/train_lora.py", "scripts/serve_lora.py"):
+        proc = subprocess.run([sys.executable, script, "--help"],
+                              capture_output=True, text=True, timeout=120)
+        assert proc.returncode == 0, proc.stderr[-400:]
+        assert "usage:" in proc.stdout

@@ -235,7 +235,7 @@ def test_data_budget_report_warns_on_small_corpus(tmp_path, capsys):
     ds = PackedLMDataset("builtin:engineering", seq_len=64, min_blocks=4)
     cfg = TrainConfig(max_steps=4, batch_size=2, grad_accum=1, log_every=100,
                       registry_root=str(tmp_path))
-    Trainer(NexusEngine(NexusConfig.small()), cfg, ds).fit()
+    Trainer(NexusEngine(NexusConfig.tiny()), cfg, ds).fit()
     printed = capsys.readouterr().out
     assert "токенов на параметр" in printed
-    assert "ВНИМАНИЕ" in printed                # 237M параметров на крошечном корпусе
+    assert "ВНИМАНИЕ" in printed                # корпус меньше числа параметров

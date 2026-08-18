@@ -62,7 +62,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 150 тестов, ~60 с на CPU
+pytest -q                        # 153 теста, ~65 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -90,6 +90,7 @@ nexus doctor                             # диагностика окружен
 nexus quickstart --scale small           # всё сразу: данные → токенизатор → обучение → приёмка
 nexus info --preset rtx5060 --build      # конфиг, число параметров, бюджет VRAM, доступные бэкенды
 nexus ingest sql:stl_items.sql           # свой корпус «ТЗ → OpenSCAD» с проверкой
+nexus export-sft --source jsonl:artifacts/ingest/dataset.jsonl   # chat-формат для LoRA
 nexus render-dataset --input artifacts/ingest/dataset.jsonl   # картинки для vision
 nexus datasets list                      # каталог открытых датасетов и лицензии
 nexus gen-math -n 50000                  # верифицированная инженерная математика
@@ -171,6 +172,10 @@ nexus collect --teacher command --command "claude -p" -n 500 --attempts 3
 * **`collect`**: дистилляция с верификацией — неудачные попытки возвращаются учителю
   как замечания («стенка 0.4 мм», «запас 1.3 при требуемом 2.0»), в корпус попадает
   только прошедшее порог, вместе с траекторией исправлений.
+* **Экспорт для дообучения готовых LLM** (`nexus export-sft` + `scripts/train_lora.py`):
+  chat-формат с физической сводкой в ответе и автоматическими примерами ремонта
+  «замечание → исправленный код». Рекомендации по базовым моделям и VRAM для
+  16 ГБ — [docs/LORA.md](docs/LORA.md).
 * **Микс-источники**: `mix:flywheel:...=0.45,mathgen:20000=0.25,hf:...=0.30` —
   ленивое чтение и перемешивание по весам, HF-датасеты в streaming.
 
@@ -417,13 +422,14 @@ nexus/
                             limits.py (валидация и пределы) · openapi.py
   eval/                     suite.py (quality gate) · ablate.py (A/B блоков)
                             bench.py (A/B генераторов) · needle.py · vram.py
-tests/                      150 тестов: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      153 теста: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       QUICKSTART.md · DEPLOYMENT.md · WHAT_WE_BUILT.md
+scripts/                    train_lora.py (LoRA на готовой модели) · serve_lora.py
+docs/                       QUICKSTART.md · DEPLOYMENT.md · LORA.md · WHAT_WE_BUILT.md
                             PHYSICS_EXPLAINED.md · LANDSCAPE.md · PLAN_TEXT_TO_3D.md
                             WOW_PLAN.md · USE_CASES.md · INGEST.md
                             TRAINING_GUIDE.md · DATA_PLAN.md

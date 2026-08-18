@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: help install test demo flywheel ingest vision optimize datasets gen-math collect mcp pretrain fno rl train-lm distill guide eval ablate serve registry needle vram
+.PHONY: help install test demo flywheel ingest vision optimize datasets gen-math collect mcp export-sft lora pretrain fno rl train-lm distill guide eval ablate serve registry needle vram
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/'
@@ -43,6 +43,12 @@ collect:  ## дистилляция с физической проверкой (
 
 mcp:  ## MCP-сервер: движок как инструменты для внешней LLM
 	$(PY) -m nexus.cli mcp
+
+export-sft:  ## экспорт корпуса в chat-формат для LoRA
+	$(PY) -m nexus.cli export-sft --source jsonl:artifacts/ingest/dataset.jsonl --out artifacts/sft
+
+lora:  ## LoRA поверх современной открытой модели (нужны unsloth/trl/peft)
+	$(PY) scripts/train_lora.py --data artifacts/sft --preset qwen3-coder-8b
 
 train-lm:  ## обучение на стандартном датасете (встроенный корпус)
 	$(PY) -m nexus.cli train-lm --source builtin:engineering --epochs 2
