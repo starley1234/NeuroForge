@@ -1,5 +1,8 @@
 # Эксплуатация
 
+Установка на сервере (systemd, nginx, Docker, бэкапы, мониторинг) —
+[DEPLOYMENT.md](DEPLOYMENT.md). Здесь — жизненный цикл моделей.
+
 ## Жизненный цикл модели
 
 ```
@@ -25,6 +28,7 @@ nexus registry show --model-name core --ref production
 nexus registry promote --model-name core --ref v0007 --tag production
 nexus registry rollback --model-name core --tag production
 nexus registry prune --model-name core --keep 5 --dry-run
+nexus registry verify                            # sha256 всех версий и теги
 ```
 
 Гарантии:

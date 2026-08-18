@@ -41,8 +41,9 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from ..registry import ModelRegistry
 from .jobs import JobManager
+from .limits import DEFAULT_LIMITS, Limits, ValidationError
 from .openapi import REDOC_HTML, SWAGGER_HTML, build_spec
-from .service import InferenceService
+from .service import BusyError, InferenceService
 
 API_KEY_ENV = "NEXUS_API_KEY"
 
@@ -187,7 +188,8 @@ class RateLimiter:
 
 
 def make_handler(api: NexusAPI, api_key: Optional[str] = None,
-                 limiter: Optional[RateLimiter] = None):
+                 limiter: Optional[RateLimiter] = None,
+                 limits: Limits = DEFAULT_LIMITS):
     class Handler(BaseHTTPRequestHandler):
         server_version = "NEXUS/0.1"
         protocol_version = "HTTP/1.1"
@@ -249,7 +251,11 @@ def make_handler(api: NexusAPI, api_key: Optional[str] = None,
         def do_POST(self):  # noqa: N802
             path = self.path.split("?")[0]
             length = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(length).decode("utf-8") if length else ""
+            if length > limits.max_body_bytes:
+                return self._send(413, {"error": f"тело запроса больше "
+                                                 f"{limits.max_body_bytes} байт",
+                                        "code": "payload_too_large"})
+            raw = self.rfile.read(length).decode("utf-8", errors="replace") if length else ""
             if not self._authorized(path):
                 return self._send(401, {"error": "нужен Authorization: Bearer <NEXUS_API_KEY>"})
             if not self._rate_ok():
@@ -277,6 +283,11 @@ def make_handler(api: NexusAPI, api_key: Optional[str] = None,
                     self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 return
+            except (ValidationError, BusyError) as exc:
+                err = json.dumps({"error": str(exc)}, ensure_ascii=False)
+                self.wfile.write(f"data: {err}\n\n".encode("utf-8"))
+                self.close_connection = True
+                return
             except Exception as exc:  # pragma: no cover
                 err = json.dumps({"error": str(exc)}, ensure_ascii=False)
                 self.wfile.write(f"data: {err}\n\n".encode("utf-8"))
@@ -285,13 +296,29 @@ def make_handler(api: NexusAPI, api_key: Optional[str] = None,
         def _handle(self, method: str, path: str, body: Dict[str, Any]) -> None:
             try:
                 code, payload = api.dispatch(method, path, body)
+            except ValidationError as exc:
+                code, payload = 400, {"error": str(exc), "code": "validation_error"}
+            except BusyError as exc:
+                self.send_response(503)
+                self.send_header("Retry-After", "5")
+                data = json.dumps({"error": str(exc), "code": "busy"},
+                                  ensure_ascii=False).encode("utf-8")
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             except TypeError as exc:
-                code, payload = 400, {"error": f"неверные параметры: {exc}"}
+                code, payload = 400, {"error": f"неверные параметры: {exc}",
+                                      "code": "bad_parameters"}
             except KeyError as exc:
-                code, payload = 404, {"error": str(exc)}
+                code, payload = 404, {"error": str(exc), "code": "not_found"}
+            except FileNotFoundError as exc:
+                code, payload = 404, {"error": str(exc), "code": "not_found"}
             except Exception as exc:  # pragma: no cover
                 traceback.print_exc()
-                code, payload = 500, {"error": f"{type(exc).__name__}: {exc}"}
+                code, payload = 500, {"error": f"{type(exc).__name__}: {exc}",
+                                      "code": "internal_error"}
             self._send(code, payload)
 
     return Handler
@@ -304,11 +331,13 @@ def create_server(host: str = "0.0.0.0", port: int = 8000,
                   api_key: Optional[str] = None, rate_limit: int = 120,
                   tokenizer: Optional[str] = None, compile_model: bool = False):
     import os
+    limits = Limits.from_env()
     service = InferenceService(registry_root, model, ref, device, preset,
-                               tokenizer_path=tokenizer, compile_model=compile_model)
+                               tokenizer_path=tokenizer, compile_model=compile_model,
+                               limits=limits)
     api = NexusAPI(service)
     key = api_key or os.environ.get(API_KEY_ENV) or None
-    handler = make_handler(api, key, RateLimiter(rate_limit))
+    handler = make_handler(api, key, RateLimiter(rate_limit), limits)
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server, api
@@ -323,12 +352,17 @@ def serve(host: str = "0.0.0.0", port: int = 8000, **kwargs) -> None:
           f"({'с ключом' if protected else 'без авторизации'}; Ctrl+C — стоп)", flush=True)
     print(f"[api] документация: http://{shown}:{port}/docs   "
           f"спецификация: http://{shown}:{port}/openapi.json", flush=True)
+    print(f"[api] пределы: grid ≤ {Limits.from_env().max_grid}, "
+          f"тело ≤ {Limits.from_env().max_body_bytes // 1024} КБ, "
+          f"параллельно ≤ {Limits.from_env().max_concurrency}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[api] остановка")
+        print("\n[api] остановка по Ctrl+C")
     finally:
+        server.shutdown()
         server.server_close()
+        print("[api] сервер закрыт", flush=True)
 
 
 def main() -> None:

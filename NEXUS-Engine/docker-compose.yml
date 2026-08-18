@@ -6,9 +6,20 @@ services:
     volumes: ["./artifacts:/data"]
     environment:
       NEXUS_API_KEY: "${NEXUS_API_KEY:-}"
+      NEXUS_MAX_CONCURRENCY: "${NEXUS_MAX_CONCURRENCY:-4}"
+      NEXUS_MAX_GRID: "${NEXUS_MAX_GRID:-48}"
+      NEXUS_MAX_BODY_BYTES: "${NEXUS_MAX_BODY_BYTES:-2097152}"
+      PYTHONUTF8: "1"
     command: ["serve", "--host", "0.0.0.0", "--port", "8000",
-              "--registry", "/data/registry", "--tokenizer", "/data/tokenizer/bpe.json"]
+              "--registry", "/data/registry", "--tokenizer", "/data/tokenizer/bpe.json",
+              "--rate-limit", "300"]
     restart: unless-stopped
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "${NEXUS_CPUS:-4.0}"
+          memory: ${NEXUS_MEMORY:-8G}
 
   # разовая задача: подготовить данные, токенизатор и первую версию модели
   train:

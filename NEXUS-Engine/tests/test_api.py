@@ -171,3 +171,87 @@ def test_docs_endpoints_served(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+# ─────────────────────────────────── надёжность: пределы и перегрузка
+def test_service_rejects_dangerous_inputs(tmp_path):
+    from nexus.serve.limits import ValidationError
+    from nexus.serve.service import InferenceService
+    svc = InferenceService(str(tmp_path / "reg"), "core", "latest")
+
+    with pytest.raises(ValidationError, match="grid"):
+        svc.analyze(code="cube([1,1,1]);", grid=512)
+    with pytest.raises(ValidationError, match="длинный"):
+        svc.analyze(code="x" * 300_000)
+    with pytest.raises(ValidationError, match="сил"):
+        svc.analyze(code="cube([1,1,1]);", force=[0, 0, -1e9])
+    with pytest.raises(ValidationError, match="material"):
+        svc.analyze(code="cube([1,1,1]);", material="unobtanium")
+    with pytest.raises(ValidationError):
+        svc.generate(prompt="")
+    with pytest.raises(ValidationError, match="батче"):
+        svc.generate_batch(prompts=["x"] * 100, max_new_tokens=2)
+
+    assert svc.analyze(code="cube([20,20,4],center=true);", grid=12)["ok"]
+
+
+def test_limits_from_env():
+    from nexus.serve.limits import Limits
+    limits = Limits.from_env({"NEXUS_MAX_GRID": "32", "NEXUS_MAX_CONCURRENCY": "1"})
+    assert limits.max_grid == 32 and limits.max_concurrency == 1
+    assert Limits.from_env({"NEXUS_MAX_GRID": "не число"}).max_grid == Limits().max_grid
+
+
+def test_api_returns_400_on_validation_error(tmp_path):
+    import threading
+    import urllib.error
+    import urllib.request
+
+    from nexus import NexusConfig, NexusEngine
+    from nexus.registry import ModelRegistry
+    from nexus.serve.app import create_server
+
+    reg = ModelRegistry(str(tmp_path / "registry"))
+    model = NexusEngine(NexusConfig.tiny())
+    reg.save("core", model.state_dict(), model.cfg.to_dict())
+    server, _ = create_server("127.0.0.1", 0, registry_root=str(tmp_path / "registry"),
+                              model="core", ref="latest")
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    def post(path, payload):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}{path}",
+                                     data=json.dumps(payload).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, json.load(r)
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read() or b"{}")
+
+    try:
+        code, body = post("/v1/analyze", {"code": "cube([1,1,1]);", "grid": 999})
+        assert code == 400 and body["code"] == "validation_error"
+        code, body = post("/v1/generate", {"prompt": "тест", "max_new_tokens": 2})
+        assert code == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_registry_verify_detects_corruption(tmp_path):
+    from nexus import NexusConfig, NexusEngine
+    from nexus.registry import ModelRegistry
+    reg = ModelRegistry(str(tmp_path / "reg"))
+    model = NexusEngine(NexusConfig.tiny())
+    mv = reg.save("core", model.state_dict(), model.cfg.to_dict())
+    reg.promote("core", 1, "production")
+
+    report = reg.verify()
+    assert report["ok"] and report["checked"] == 1 and not report["problems"]
+
+    with open(mv.weights, "ab") as fh:
+        fh.write(b"\x00")
+    broken = reg.verify()
+    assert not broken["ok"]
+    assert "sha256" in broken["problems"][0]["problem"]

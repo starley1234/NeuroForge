@@ -19,7 +19,8 @@
 Видеокарта NVIDIA определяется автоматически (RTX 50xx → колёса `cu128`).
 Если torch уже стоял в CPU-сборке: `.\nexus.ps1 gpu` / `./nexus.sh gpu`.
 
-Пошагово и с разбором проблем — [docs/QUICKSTART.md](docs/QUICKSTART.md).
+Пошагово и с разбором проблем — [docs/QUICKSTART.md](docs/QUICKSTART.md),
+развёртывание в продакшене — [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 Что здесь на самом деле построено и что из этого измерено —
 [docs/WHAT_WE_BUILT.md](docs/WHAT_WE_BUILT.md).
 Сценарии применения и план развития — [docs/USE_CASES.md](docs/USE_CASES.md).
@@ -61,7 +62,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 141 тест, ~60 с на CPU
+pytest -q                        # 148 тестов, ~60 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -98,7 +99,7 @@ nexus train-tokenizer --source dir:./corpus --vocab-size 8192   # свой BPE
 nexus train-lm --source dir:./corpus     # обучение на стандартном датасете
 nexus distill --teacher Qwen/Qwen2.5-0.5B --mode logit   # дистилляция из LLM
 nexus eval --ref latest --baseline production --gate     # приёмочные тесты + промоушен
-nexus registry list | history | promote | rollback | prune
+nexus registry list | history | compare | promote | rollback | prune | verify
 nexus serve --host 0.0.0.0 --port 8000   # HTTP API: инференс + обучение фоном
 nexus analyze examples/scad/flange.scad --force 0 0 -600 --material alu6061 --stl out.stl
 nexus reward examples/scad/thin_plate_bad.scad          # физическая награда как в RL
@@ -259,7 +260,7 @@ KV), поддерживает `top_p`, остановку по EOS и честн
 Защита: `NEXUS_API_KEY=secret` включает `Authorization: Bearer`, плюс
 rate-limit по IP (`--rate-limit`). Ускорение: `--compile` (torch.compile).
 
-### 3.8 Docker
+### 3.8 Docker и продакшен
 
 ```bash
 docker compose --profile train up train   # данные + первая версия модели
@@ -268,6 +269,13 @@ docker compose up -d                      # API на :8000, реестр в ./ar
 
 CI (`.github/workflows/ci.yml`): установка, `doctor`, полный `pytest`,
 сквозной `quickstart --scale nano` и выгрузка отчёта приёмки артефактом.
+
+Продакшен-развёртывание (systemd, nginx + TLS, интеграция с сайтом по PHP,
+переменные пределов, бэкапы, мониторинг, откат) — [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Надёжность: все входные данные валидируются (`grid`, размер кода, силы,
+материалы), тяжёлые операции ограничены семафором (`NEXUS_MAX_CONCURRENCY`,
+перегрузка → HTTP 503 с `Retry-After`), тело запроса ограничено (413),
+целостность реестра проверяется командой `nexus registry verify`.
 
 ---
 
@@ -406,17 +414,19 @@ nexus/
   training/                 trainer.py (общий цикл) · train_lm.py · distill.py
                             pretrain.py · train_fno.py · grpo.py · rewards.py
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
+                            limits.py (валидация и пределы) · openapi.py
   eval/                     suite.py (quality gate) · ablate.py (A/B блоков)
                             bench.py (A/B генераторов) · needle.py · vram.py
-tests/                      141 тест: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      148 тестов: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · PHYSICS_EXPLAINED.md
-                            LANDSCAPE.md · PLAN_TEXT_TO_3D.md · WOW_PLAN.md
-                            USE_CASES.md · INGEST.md · TRAINING_GUIDE.md · DATA_PLAN.md
+docs/                       QUICKSTART.md · DEPLOYMENT.md · WHAT_WE_BUILT.md
+                            PHYSICS_EXPLAINED.md · LANDSCAPE.md · PLAN_TEXT_TO_3D.md
+                            WOW_PLAN.md · USE_CASES.md · INGEST.md
+                            TRAINING_GUIDE.md · DATA_PLAN.md
                             architecture.md · training.md · api.md · operations.md
                             vram_budget.md · roadmap.md
 ```

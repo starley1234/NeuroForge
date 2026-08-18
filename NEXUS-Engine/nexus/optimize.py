@@ -73,6 +73,31 @@ class Candidate:
         return asdict(self)
 
 
+class _EvalCache:
+    """Кэш расчётов: одна и та же комбинация параметров не считается дважды."""
+
+    def __init__(self) -> None:
+        self._store: Dict[Tuple[Tuple[str, float], ...], "Candidate"] = {}
+        self.hits = 0
+        self.misses = 0
+
+    @staticmethod
+    def _key(params: Dict[str, float], grid: int) -> Tuple[Tuple[str, float], ...]:
+        return tuple(sorted((k, round(float(v), 4)) for k, v in params.items())) + \
+               (("__grid__", float(grid)),)
+
+    def get(self, params: Dict[str, float], grid: int):
+        item = self._store.get(self._key(params, grid))
+        if item is not None:
+            self.hits += 1
+        else:
+            self.misses += 1
+        return item
+
+    def put(self, params: Dict[str, float], grid: int, value: "Candidate") -> None:
+        self._store[self._key(params, grid)] = value
+
+
 @dataclass
 class OptimizeResult:
     baseline: Candidate
@@ -82,6 +107,9 @@ class OptimizeResult:
     evaluations: int
     seconds: float
     history: List[Dict[str, Any]] = field(default_factory=list)
+    cache_hits: int = 0
+    feasible: bool = True
+    warnings: List[str] = field(default_factory=list)
 
     @property
     def mass_saved_pct(self) -> float:
@@ -97,6 +125,9 @@ class OptimizeResult:
             "mass_saved_pct": self.mass_saved_pct,
             "knobs": self.knobs,
             "evaluations": self.evaluations,
+            "cache_hits": self.cache_hits,
+            "feasible": self.feasible,
+            "warnings": self.warnings,
             "seconds": round(self.seconds, 1),
         }
 
@@ -112,11 +143,17 @@ class OptimizeResult:
         lines += [
             "-" * 44,
             f"{'масса, г':22s} {b.mass_g:10.2f} {n.mass_g:10.2f}"
-            f"   ({self.mass_saved_pct:+.1f} %)",
+            f"   (экономия {self.mass_saved_pct:.1f} %)",
             f"{'запас прочности':22s} {b.safety_factor:10.2f} {n.safety_factor:10.2f}",
             f"{'мин. стенка, мм':22s} {b.min_wall_mm:10.2f} {n.min_wall_mm:10.2f}",
-            f"\nвариантов просчитано: {self.evaluations} за {self.seconds:.1f} с",
+            f"\nвариантов просчитано: {self.evaluations} за {self.seconds:.1f} с"
+            + (f" (повторов из кэша: {self.cache_hits})" if self.cache_hits else ""),
         ]
+        if not self.feasible:
+            lines.append("ВНИМАНИЕ: ни один вариант не прошёл ограничения — "
+                         "ослабьте --safety или расширьте --span")
+        for warning in self.warnings:
+            lines.append(f"! {warning}")
         return "\n".join(lines)
 
 
@@ -210,6 +247,7 @@ def optimize(
     only: Optional[Sequence[str]] = None,
     seed: int = 0,
     mass_budget_g: Optional[float] = None,
+    restarts: int = 2,
     verbose: bool = True,
 ) -> OptimizeResult:
     """Найти самый лёгкий вариант детали, который держит нагрузку.
@@ -222,11 +260,29 @@ def optimize(
     knobs = pick_knobs(code, span=span, only=only)
     if not knobs:
         raise ValueError("не нашёл силовых параметров: укажите их явно через --params")
+    if budget < 4:
+        raise ValueError("--budget должен быть не меньше 4")
+
+    warnings: List[str] = []
+    cache = _EvalCache()
+
+    def measure(params: Dict[str, float], at_grid: int) -> Candidate:
+        cached = cache.get(params, at_grid)
+        if cached is not None:
+            return cached
+        value = evaluate(code, params, force_n, fixture, material, required_sf,
+                         min_wall_mm, at_grid, mass_budget_g)
+        cache.put(params, at_grid, value)
+        return value
 
     t0 = time.time()
     base_params = {k.name: k.base for k in knobs}
-    baseline = evaluate(code, base_params, force_n, fixture, material, required_sf,
-                        min_wall_mm, grid, mass_budget_g)
+    baseline = measure(base_params, grid)
+    if baseline.error:
+        raise ValueError(f"исходная деталь не собирается: {baseline.error}")
+    if not baseline.ok:
+        warnings.append("исходная деталь не проходит ограничения — "
+                        "оптимизатор сначала ищет допустимый вариант")
     if verbose:
         print(f"[optimize] крутим: {', '.join(k.name for k in knobs)}")
         print(f"[optimize] исходно: масса {baseline.mass_g:.1f} г, "
@@ -238,56 +294,72 @@ def optimize(
     evaluations = 1
 
     # 1) разведка случайными точками
-    explore = max(4, budget // 3)
+    explore = max(3, budget // 3)
+    starts: List[Candidate] = []
     for _ in range(explore):
         trial = {k.name: k.clamp(k.base * rng.uniform(1 - span, 1 + span)) for k in knobs}
-        cand = evaluate(code, trial, force_n, fixture, material, required_sf,
-                        min_wall_mm, grid, mass_budget_g)
+        cand = measure(trial, grid)
         evaluations += 1
         history.append({"stage": "explore", "score": cand.score, "mass": cand.mass_g,
                         "sf": cand.safety_factor})
+        starts.append(cand)
         if cand.score < best.score:
             best = cand
 
-    # 2) покоординатный спуск от лучшей точки
-    step = 0.25
-    while evaluations < budget and step > 0.03:
-        improved = False
-        for knob in knobs:
-            for direction in (1.0, -1.0):
-                if evaluations >= budget:
-                    break
-                trial = dict(best.params)
-                trial[knob.name] = knob.clamp(trial[knob.name] * (1 + direction * step))
-                cand = evaluate(code, trial, force_n, fixture, material, required_sf,
-                                min_wall_mm, grid, mass_budget_g)
-                evaluations += 1
-                history.append({"stage": f"descent:{knob.name}", "score": cand.score,
-                                "mass": cand.mass_g, "sf": cand.safety_factor})
-                if cand.score < best.score:
-                    best, improved = cand, True
-        if not improved:
-            step /= 2
+    # 2) покоординатный спуск из нескольких стартовых точек: одна точка легко
+    #    застревает в локальном минимуме, две-три дают заметно лучший результат
+    starts.sort(key=lambda c: c.score)
+    seeds = [best] + starts[: max(0, restarts - 1)]
+    for start in seeds:
+        current = start
+        step = 0.25
+        while evaluations < budget and step > 0.03:
+            improved = False
+            for knob in knobs:
+                for direction in (1.0, -1.0):
+                    if evaluations >= budget:
+                        break
+                    trial = dict(current.params)
+                    trial[knob.name] = knob.clamp(trial[knob.name] * (1 + direction * step))
+                    cand = measure(trial, grid)
+                    evaluations += 1
+                    history.append({"stage": f"descent:{knob.name}", "score": cand.score,
+                                    "mass": cand.mass_g, "sf": cand.safety_factor})
+                    if cand.score < current.score:
+                        current, improved = cand, True
+                    if cand.score < best.score:
+                        best = cand
+            if not improved:
+                step /= 2
+        if evaluations >= budget:
+            break
 
-    # 3) финальная проверка лучшего варианта на мелкой сетке
+    # 3) финальная проверка на мелкой сетке: грубая сетка могла завысить запас
     if verify_grid > grid:
-        refined = evaluate(code, best.params, force_n, fixture, material, required_sf,
-                           min_wall_mm, verify_grid, mass_budget_g)
+        refined = measure(best.params, verify_grid)
         evaluations += 1
-        if refined.ok or not best.ok:
+        if not refined.ok and best.ok:
+            warnings.append("на мелкой сетке лучший вариант перестал проходить — "
+                            "оставлен исходный, увеличьте --grid при поиске")
+            best_params_fallback = dict(base_params)
+            best = measure(best_params_fallback, verify_grid)
+            evaluations += 1
+        else:
             best = refined
-        baseline = evaluate(code, base_params, force_n, fixture, material, required_sf,
-                            min_wall_mm, verify_grid, mass_budget_g)
+        baseline = measure(base_params, verify_grid)
         evaluations += 1
 
     result = OptimizeResult(
         baseline=baseline, best=best, code=substitute(code, best.params),
         knobs=[asdict(k) for k in knobs], evaluations=evaluations,
-        seconds=time.time() - t0, history=history,
+        seconds=time.time() - t0, history=history, cache_hits=cache.hits,
+        feasible=best.ok, warnings=warnings,
     )
     if verbose:
         print(f"[optimize] итог: масса {best.mass_g:.1f} г "
-              f"({result.mass_saved_pct:+.1f} %), запас {best.safety_factor:.2f}")
+              f"(экономия {result.mass_saved_pct:.1f} %), "
+              f"запас {best.safety_factor:.2f}, "
+              f"{'ограничения соблюдены' if best.ok else 'ОГРАНИЧЕНИЯ НЕ СОБЛЮДЕНЫ'}")
     return result
 
 

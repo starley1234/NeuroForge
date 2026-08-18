@@ -1,6 +1,7 @@
 """Сервис инференса: загрузка моделей из реестра, генерация, инженерный анализ."""
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from dataclasses import dataclass
@@ -15,6 +16,17 @@ from ..model import NexusEngine
 from ..registry import ModelRegistry, ModelVersion
 from ..scad.render import render
 from ..training.rewards import score_scad
+from .limits import (DEFAULT_LIMITS, Limits, ValidationError, check_choice, check_code,
+                     check_force, check_grid, check_number, check_prompt, check_prompts,
+                     check_tokens)
+
+
+MATERIAL_NAMES = ("pla", "petg", "abs", "alu6061", "steel304", "ti6al4v")
+FIXTURES = ("base", "bore", "face_x")
+
+
+class BusyError(RuntimeError):
+    """Все слоты заняты — клиенту уходит 503 с Retry-After."""
 
 
 @dataclass
@@ -37,7 +49,8 @@ class InferenceService:
     def __init__(self, registry_root: str = "artifacts/registry",
                  default_model: str = "core", default_ref: str = "production",
                  device: str = "auto", preset: str = "tiny", max_cached: int = 2,
-                 tokenizer_path: Optional[str] = None, compile_model: bool = False):
+                 tokenizer_path: Optional[str] = None, compile_model: bool = False,
+                 limits: Optional[Limits] = None):
         self.registry = ModelRegistry(registry_root)
         self.default_model = default_model
         self.default_ref = default_ref
@@ -46,6 +59,11 @@ class InferenceService:
         self.preset = preset
         self.max_cached = max_cached
         self.compile_model = compile_model
+        self.limits = limits or Limits.from_env()
+        # тяжёлые операции (генерация, МКЭ) не должны запускаться все разом:
+        # иначе несколько параллельных запросов выедают память и всё встаёт
+        self._slots = threading.BoundedSemaphore(self.limits.max_concurrency)
+        self.rejected_busy = 0
         from ..data.bpe import load_tokenizer
         self.tokenizer = load_tokenizer(tokenizer_path)
         self.latency_ms: List[float] = []
@@ -116,7 +134,18 @@ class InferenceService:
                  top_k: int = 40, top_p: float = 1.0, stop_at_eos: bool = True,
                  model: Optional[str] = None,
                  ref: Optional[str] = None) -> Dict[str, Any]:
+        prompt = check_prompt(prompt, self.limits)
+        max_new_tokens = check_tokens(max_new_tokens, self.limits)
+        temperature = check_number(temperature, "temperature", 0.8, 0.0, 5.0)
+        top_p = check_number(top_p, "top_p", 1.0, 0.0, 1.0)
         self.requests += 1
+        with self._slot():
+            return self._generate_locked(prompt, max_new_tokens, temperature, top_k,
+                                         top_p, stop_at_eos, model, ref)
+
+    def _generate_locked(self, prompt: str, max_new_tokens: int, temperature: float,
+                         top_k: int, top_p: float, stop_at_eos: bool,
+                         model: Optional[str], ref: Optional[str]) -> Dict[str, Any]:
         lm = self.get_model(model, ref)
         tok = lm.tokenizer or self.tokenizer
         ids = torch.tensor([tok.encode(prompt, bos=True)], device=self.device)
@@ -140,25 +169,41 @@ class InferenceService:
                 force: Tuple[float, float, float] = (0.0, 0.0, -200.0),
                 fixture: str = "base", grid: int = 24,
                 calculix: bool = False) -> Dict[str, Any]:
+        code = check_code(code, self.limits)
+        material = check_choice(material, MATERIAL_NAMES, "material", "pla")
+        force = check_force(force, self.limits)
+        fixture = check_choice(fixture, FIXTURES, "fixture", "base")
+        grid = check_grid(grid, self.limits)
         self.requests += 1
-        res = render(code, resolution=grid, material=material)
-        if not res.ok:
-            return {"ok": False, "error": res.error}
-        fem = solve(res.voxels, tuple(force), fixture, material, prefer_calculix=calculix)
-        return {**res.summary(), "fem": fem.to_dict()}
+        with self._slot():
+            res = render(code, resolution=grid, material=material)
+            if not res.ok:
+                return {"ok": False, "error": res.error}
+            fem = solve(res.voxels, tuple(force), fixture, material,
+                        prefer_calculix=bool(calculix))
+            return {**res.summary(), "fem": fem.to_dict()}
 
     def reward(self, code: str, material: str = "pla",
                force: Tuple[float, float, float] = (0.0, 0.0, -200.0),
                fixture: str = "base", required_sf: float = 2.0,
                grid: int = 20) -> Dict[str, Any]:
+        code = check_code(code, self.limits)
+        material = check_choice(material, MATERIAL_NAMES, "material", "pla")
+        force = check_force(force, self.limits)
+        fixture = check_choice(fixture, FIXTURES, "fixture", "base")
+        required_sf = check_number(required_sf, "required_sf", 2.0, 0.0,
+                                   self.limits.max_required_sf)
+        grid = check_grid(grid, self.limits, default=20)
         self.requests += 1
-        return score_scad(code, tuple(force), fixture, material,
-                          required_sf=required_sf, resolution=grid).to_dict()
+        with self._slot():
+            return score_scad(code, tuple(force), fixture, material,
+                              required_sf=required_sf, resolution=grid).to_dict()
 
     def design(self, spec: str, max_new_tokens: int = 96, material: str = "pla",
                force: Tuple[float, float, float] = (0.0, 0.0, -200.0),
                model: Optional[str] = None, ref: Optional[str] = None) -> Dict[str, Any]:
         """Сквозной сценарий: ТЗ → код → геометрия → FEM → награда."""
+        spec = check_prompt(spec, self.limits)
         gen = self.generate(spec + "<scad>", max_new_tokens=max_new_tokens,
                             model=model, ref=ref)
         analysis = self.analyze(gen["text"], material=material, force=force)
@@ -171,6 +216,8 @@ class InferenceService:
                         stop_at_eos: bool = True, model: Optional[str] = None,
                         ref: Optional[str] = None) -> Iterator[Dict[str, Any]]:
         """Потоковая генерация через кэш состояния (SSE)."""
+        prompt = check_prompt(prompt, self.limits)
+        max_new_tokens = check_tokens(max_new_tokens, self.limits)
         self.requests += 1
         lm = self.get_model(model, ref)
         tok = lm.tokenizer or self.tokenizer
@@ -193,6 +240,8 @@ class InferenceService:
                        model: Optional[str] = None,
                        ref: Optional[str] = None) -> Dict[str, Any]:
         """Батч-инференс: один прогон модели на несколько промптов."""
+        prompts = check_prompts(prompts, self.limits)
+        max_new_tokens = check_tokens(max_new_tokens, self.limits)
         self.requests += len(prompts)
         lm = self.get_model(model, ref)
         tok = lm.tokenizer or self.tokenizer
@@ -224,6 +273,9 @@ class InferenceService:
             "# HELP nexus_models_loaded Загруженных моделей в кэше",
             "# TYPE nexus_models_loaded gauge",
             f"nexus_models_loaded {len(self._cache)}",
+            "# HELP nexus_rejected_busy_total Отклонено из-за перегрузки",
+            "# TYPE nexus_rejected_busy_total counter",
+            f"nexus_rejected_busy_total {self.rejected_busy}",
             "# HELP nexus_generation_latency_ms Латентность генерации на токен",
             "# TYPE nexus_generation_latency_ms summary",
             f'nexus_generation_latency_ms{{quantile="0.5"}} {round(p50, 3)}',
@@ -234,6 +286,18 @@ class InferenceService:
             lines.append(f'nexus_model_version{{model="{m.key}"}} {version}')
         return "\n".join(lines) + "\n"
 
+    # ------------------------------------------------------------- нагрузка
+    @contextlib.contextmanager
+    def _slot(self):
+        """Ограничитель параллельных тяжёлых операций."""
+        if not self._slots.acquire(timeout=self.limits.request_timeout_s):
+            self.rejected_busy += 1
+            raise BusyError("сервис перегружен: попробуйте позже")
+        try:
+            yield
+        finally:
+            self._slots.release()
+
     # -------------------------------------------------------------- сервисное
     def health(self) -> Dict[str, Any]:
         return {
@@ -241,6 +305,8 @@ class InferenceService:
             "uptime_s": round(time.time() - self.started, 1),
             "device": self.device,
             "requests": self.requests,
+            "rejected_busy": self.rejected_busy,
+            "max_concurrency": self.limits.max_concurrency,
             "loaded": [
                 {"key": m.key, "version": m.version.version if m.version else None,
                  "untrained": m.version is None}

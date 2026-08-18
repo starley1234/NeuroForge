@@ -307,3 +307,29 @@ def test_optimizer_writes_files(tmp_path):
                            grid=10, verify_grid=10, verbose=False)
     assert os.path.exists(out) and os.path.exists(str(tmp_path / "opt_report.json"))
     assert result.to_dict()["mass_saved_pct"] is not None
+
+
+def test_optimizer_uses_cache_and_is_deterministic():
+    from nexus.optimize import optimize
+    first = optimize(BRACKET, force_n=(0, 0, -250), budget=12, grid=10, verify_grid=10,
+                     seed=7, verbose=False)
+    second = optimize(BRACKET, force_n=(0, 0, -250), budget=12, grid=10, verify_grid=10,
+                      seed=7, verbose=False)
+    assert first.best.params == second.best.params        # воспроизводимо
+    assert first.cache_hits >= 0 and first.evaluations >= 12
+    assert isinstance(first.feasible, bool)
+
+
+def test_optimizer_reports_infeasible_instead_of_lying():
+    from nexus.optimize import optimize
+    # заведомо невыполнимое требование: запас 1000 при пластике
+    result = optimize(BRACKET, force_n=(0, 0, -5000), material="pla", required_sf=1000.0,
+                      budget=8, grid=10, verify_grid=10, verbose=False)
+    assert result.feasible is False
+    assert "ВНИМАНИЕ" in result.summary()
+
+
+def test_optimizer_rejects_broken_input():
+    from nexus.optimize import optimize
+    with pytest.raises(ValueError, match="не собирается|силовых"):
+        optimize("thickness = 3; cube([10,10,10)", budget=6, grid=8, verbose=False)

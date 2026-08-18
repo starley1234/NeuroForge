@@ -124,7 +124,7 @@ def _cmd_optimize(args) -> int:
         material=args.material, required_sf=args.safety, min_wall_mm=args.min_wall,
         budget=args.budget, grid=args.grid, verify_grid=args.verify_grid,
         span=args.span, only=args.params.split(",") if args.params else None,
-        mass_budget_g=args.mass_budget)
+        mass_budget_g=args.mass_budget, restarts=args.restarts, seed=args.seed)
     print()
     print(result.summary())
     if args.json:
@@ -426,6 +426,10 @@ def _cmd_registry(args) -> int:
                 else:
                     delta = f"{diff:+.4g}"
             print(f"{k:22s} {_fmt(va):>14s} {_fmt(vb):>14s}   {delta}")
+    elif args.action == "verify":
+        report = reg.verify(args.model_name if args.model_name != "*" else None)
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0 if report["ok"] else 1
     elif args.action == "prune":
         removed = reg.prune(args.model_name, args.keep, dry_run=args.dry_run)
         print(json.dumps({"removed": removed, "dry_run": args.dry_run}, ensure_ascii=False))
@@ -602,7 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("registry", help="реестр моделей: версии, теги, откат")
     p.add_argument("action", choices=["list", "show", "history", "compare", "promote",
-                                      "rollback", "prune"])
+                                      "rollback", "prune", "verify"])
     p.add_argument("--model-name", default="core")
     p.add_argument("--ref", default="latest", help="версия A (для compare)")
     p.add_argument("--tag", default="production", help="тег или версия B (для compare)")
@@ -658,6 +662,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--span", type=float, default=0.6, help="диапазон изменения, доля")
     p.add_argument("--params", default=None, help="какие параметры крутить (через запятую)")
     p.add_argument("--mass-budget", type=float, default=None)
+    p.add_argument("--restarts", type=int, default=2, help="стартовых точек спуска")
+    p.add_argument("--seed", type=int, default=0)
     p.add_argument("--json", default=None)
     p.set_defaults(fn=_cmd_optimize)
 

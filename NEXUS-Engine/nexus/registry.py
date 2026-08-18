@@ -274,6 +274,44 @@ class ModelRegistry:
                 shutil.rmtree(self._version_dir(name, v), ignore_errors=True)
         return removed
 
+    def verify(self, name: Optional[str] = None) -> Dict[str, Any]:
+        """Проверить целостность хранилища: файлы на месте, sha256 совпадают.
+
+        Полезно после переноса реестра, отката бэкапа или падения диска —
+        одна команда вместо ручной сверки.
+        """
+        report: Dict[str, Any] = {"ok": True, "checked": 0, "problems": []}
+        for model_name in ([name] if name else self.models()):
+            for version in self.versions(model_name):
+                report["checked"] += 1
+                try:
+                    mv = self.get(model_name, version)
+                except Exception as exc:
+                    report["problems"].append(
+                        {"model": model_name, "version": version,
+                         "problem": f"meta.json не читается: {exc}"})
+                    continue
+                if not os.path.exists(mv.weights):
+                    report["problems"].append(
+                        {"model": model_name, "version": version,
+                         "problem": "нет файла весов model.pt"})
+                    continue
+                if mv.sha256 and _sha256(mv.weights) != mv.sha256:
+                    report["problems"].append(
+                        {"model": model_name, "version": version,
+                         "problem": "sha256 не совпадает — файл повреждён"})
+                if mv.tokenizer and not mv.tokenizer_path:
+                    report["problems"].append(
+                        {"model": model_name, "version": version,
+                         "problem": "в метаданных указан токенизатор, но файла нет"})
+            for tag, version in self.tags(model_name).items():
+                if version not in self.versions(model_name):
+                    report["problems"].append(
+                        {"model": model_name, "version": version,
+                         "problem": f"тег {tag} указывает на несуществующую версию"})
+        report["ok"] = not report["problems"]
+        return report
+
     def summary(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"root": os.path.abspath(self.root), "models": {}}
         for name in self.models():
