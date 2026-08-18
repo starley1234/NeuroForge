@@ -103,10 +103,11 @@ class NexusEngine(nn.Module):
         states: Optional[List[BlockState]] = None,
         use_state: bool = False,
         continuous: bool = False,
+        pos_offset: int = 0,
     ) -> NexusOutput:
         pack: List[LatentPacket] = list(packets or [])
         if tokens is not None:
-            pack.insert(0, self.text_encoder(tokens))
+            pack.insert(0, self.text_encoder(tokens, pos_offset=pos_offset))
         assert pack, "нужны либо tokens, либо packets"
 
         x = self.encode(pack)
@@ -155,23 +156,82 @@ class NexusEngine(nn.Module):
                 "aux": (out.aux_loss or lm.new_zeros(())).detach(),
                 "ponder": ponder.detach()}
 
+    @staticmethod
+    def _sample(logits: torch.Tensor, temperature: float, top_k: int,
+                top_p: float = 1.0) -> torch.Tensor:
+        if temperature <= 0:
+            return logits.argmax(-1, keepdim=True)
+        logits = logits / temperature
+        k = min(top_k, logits.shape[-1]) if top_k > 0 else logits.shape[-1]
+        v, idx = torch.topk(logits, k, dim=-1)
+        probs = torch.softmax(v, dim=-1)
+        if 0 < top_p < 1.0:                       # nucleus: отсечь длинный хвост
+            sorted_p, order = torch.sort(probs, dim=-1, descending=True)
+            keep = (torch.cumsum(sorted_p, dim=-1) - sorted_p) < top_p
+            keep[..., 0] = True
+            mask = torch.zeros_like(probs, dtype=torch.bool).scatter(-1, order, keep)
+            probs = torch.where(mask, probs, torch.zeros_like(probs))
+            probs = probs / probs.sum(-1, keepdim=True).clamp(min=1e-9)
+        return idx.gather(-1, torch.multinomial(probs, 1))
+
     @torch.no_grad()
     def generate(self, tokens: torch.Tensor, max_new_tokens: int = 64,
-                 temperature: float = 0.8, top_k: int = 40) -> torch.Tensor:
+                 temperature: float = 0.8, top_k: int = 40, top_p: float = 1.0,
+                 eos_id: Optional[int] = None, use_cache: bool = True) -> torch.Tensor:
+        """Инкрементальная генерация: префикс считается один раз, дальше по токену.
+
+        Состояние (TTT + окно KV) переносится между шагами, поэтому стоимость
+        одного токена постоянна, а не растёт с длиной контекста.
+        """
         self.eval()
+        if not use_cache:
+            for _ in range(max_new_tokens):
+                window = tokens[:, -self.cfg.attention.window:]
+                logits = self.forward(tokens=window, reason=False).logits[:, -1]
+                tokens = torch.cat([tokens, self._sample(logits, temperature, top_k, top_p)],
+                                   dim=1)
+            return tokens
+
+        offset = tokens.shape[1]
+        out = self.forward(tokens=tokens, reason=False, use_state=True)
+        states = out.states  # type: ignore[attr-defined]
+        logits = out.logits[:, -1]
+        finished = torch.zeros(tokens.shape[0], dtype=torch.bool, device=tokens.device)
+
         for _ in range(max_new_tokens):
-            window = tokens[:, -self.cfg.attention.window:]
-            logits = self.forward(tokens=window, reason=False).logits[:, -1]
-            if temperature <= 0:
-                nxt = logits.argmax(-1, keepdim=True)
-            else:
-                logits = logits / temperature
-                k = min(top_k, logits.shape[-1])
-                v, idx = torch.topk(logits, k, dim=-1)
-                probs = torch.softmax(v, dim=-1)
-                nxt = idx.gather(-1, torch.multinomial(probs, 1))
+            nxt = self._sample(logits, temperature, top_k, top_p)
             tokens = torch.cat([tokens, nxt], dim=1)
+            if eos_id is not None:
+                finished |= nxt.squeeze(-1) == eos_id
+                if bool(finished.all()):
+                    break
+            step = self.forward(tokens=nxt, reason=False, states=states,
+                                use_state=True, pos_offset=offset)
+            states = step.states  # type: ignore[attr-defined]
+            logits = step.logits[:, -1]
+            offset += 1
         return tokens
+
+    @torch.no_grad()
+    def stream(self, tokens: torch.Tensor, max_new_tokens: int = 64,
+               temperature: float = 0.8, top_k: int = 40, top_p: float = 1.0,
+               eos_id: Optional[int] = None):
+        """Итератор токенов: префикс считается один раз, дальше по токену."""
+        self.eval()
+        offset = tokens.shape[1]
+        out = self.forward(tokens=tokens, reason=False, use_state=True)
+        states = out.states  # type: ignore[attr-defined]
+        logits = out.logits[:, -1]
+        for _ in range(max_new_tokens):
+            nxt = self._sample(logits, temperature, top_k, top_p)
+            yield nxt
+            if eos_id is not None and bool((nxt.squeeze(-1) == eos_id).all()):
+                return
+            step = self.forward(tokens=nxt, reason=False, states=states,
+                                use_state=True, pos_offset=offset)
+            states = step.states  # type: ignore[attr-defined]
+            logits = step.logits[:, -1]
+            offset += 1
 
     # ------------------------------------------------------------ статистика
     def parameter_report(self) -> Dict[str, float]:

@@ -141,6 +141,8 @@ def run_quickstart(
                    registry_root=registry_root, tokenizer_path=tok_path,
                    max_steps=cfg["max_steps"], batch_size=int(cfg.get("batch", 2)),
                    grad_accum=4, device=device, amp=device.startswith("cuda"),
+                   eval_every=max(10, cfg["max_steps"] // 20),
+                   patience=5 if cfg["max_steps"] >= 500 else 0,
                    log_every=max(1, cfg["max_steps"] // 20))
     steps["training"] = {"metrics": out["metrics"], "version": out["version"]["version"]}
     print(f"   версия {out['version']['name']}:v{out['version']['version']:04d}, "

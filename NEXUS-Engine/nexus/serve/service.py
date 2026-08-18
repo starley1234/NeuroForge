@@ -94,9 +94,27 @@ class InferenceService:
         return {"loaded": lm.key, "version": lm.version.to_dict() if lm.version else None}
 
     # ------------------------------------------------------------- операции
+    @staticmethod
+    def _quality_hint(lm: LoadedModel) -> Optional[str]:
+        """Честное предупреждение, если версия почти не обучена."""
+        if lm.version is None:
+            return "модель не обучена (веса из пресета) — вывод будет случайным"
+        metrics = lm.version.metrics or {}
+        ppl = metrics.get("val_ppl")
+        vocab = (lm.version.config or {}).get("vocab_size")
+        if ppl and vocab and ppl > 0.5 * float(vocab):
+            return (f"версия недообучена: val_ppl={ppl:.0f} при словаре {vocab} "
+                    f"(случайное угадывание ≈ {vocab}); осмысленный текст появится "
+                    f"после прогона --scale gpu")
+        if metrics.get("steps", 0) and metrics["steps"] < 500:
+            return (f"всего {int(metrics['steps'])} шагов обучения — это демо-прогон, "
+                    f"а не рабочая модель")
+        return None
+
     @torch.no_grad()
     def generate(self, prompt: str, max_new_tokens: int = 64, temperature: float = 0.8,
-                 top_k: int = 40, model: Optional[str] = None,
+                 top_k: int = 40, top_p: float = 1.0, stop_at_eos: bool = True,
+                 model: Optional[str] = None,
                  ref: Optional[str] = None) -> Dict[str, Any]:
         self.requests += 1
         lm = self.get_model(model, ref)
@@ -104,7 +122,8 @@ class InferenceService:
         ids = torch.tensor([tok.encode(prompt, bos=True)], device=self.device)
         t0 = time.time()
         out = lm.model.generate(ids, max_new_tokens=max_new_tokens,
-                                temperature=temperature, top_k=top_k)
+                                temperature=temperature, top_k=top_k, top_p=top_p,
+                                eos_id=tok.eos_id if stop_at_eos else None)
         text = tok.decode(out[0, ids.shape[1]:].tolist())
         self.latency_ms.append((time.time() - t0) * 1000 / max(max_new_tokens, 1))
         del self.latency_ms[:-500]
@@ -113,6 +132,7 @@ class InferenceService:
             "tokens_generated": int(out.shape[1] - ids.shape[1]),
             "ms": round((time.time() - t0) * 1000, 2),
             "model": lm.key, "untrained": lm.version is None,
+            "quality_hint": self._quality_hint(lm),
             "version": lm.version.to_dict() if lm.version else None,
         }
 
@@ -147,25 +167,25 @@ class InferenceService:
 
     @torch.no_grad()
     def generate_stream(self, prompt: str, max_new_tokens: int = 64,
-                        temperature: float = 0.8, top_k: int = 40,
-                        model: Optional[str] = None,
+                        temperature: float = 0.8, top_k: int = 40, top_p: float = 1.0,
+                        stop_at_eos: bool = True, model: Optional[str] = None,
                         ref: Optional[str] = None) -> Iterator[Dict[str, Any]]:
-        """Потоковая генерация: по токену за шаг (для SSE)."""
+        """Потоковая генерация через кэш состояния (SSE)."""
         self.requests += 1
         lm = self.get_model(model, ref)
         tok = lm.tokenizer or self.tokenizer
         ids = torch.tensor([tok.encode(prompt, bos=True)], device=self.device)
         produced: List[int] = []
-        for i in range(max_new_tokens):
-            ids = lm.model.generate(ids, max_new_tokens=1, temperature=temperature,
-                                    top_k=top_k)
-            token = int(ids[0, -1])
+        for i, nxt in enumerate(lm.model.stream(
+                ids, max_new_tokens=max_new_tokens, temperature=temperature,
+                top_k=top_k, top_p=top_p,
+                eos_id=tok.eos_id if stop_at_eos else None)):
+            token = int(nxt[0, 0])
             produced.append(token)
-            yield {"index": i, "token": token,
-                   "text": tok.decode([token]),
-                   "done": i == max_new_tokens - 1}
-        yield {"index": max_new_tokens, "text": "", "done": True,
-               "full_text": tok.decode(produced), "model": lm.key}
+            yield {"index": i, "token": token, "text": tok.decode([token]), "done": False}
+        yield {"index": len(produced), "text": "", "done": True,
+               "full_text": tok.decode(produced), "model": lm.key,
+               "quality_hint": self._quality_hint(lm)}
 
     @torch.no_grad()
     def generate_batch(self, prompts: List[str], max_new_tokens: int = 64,

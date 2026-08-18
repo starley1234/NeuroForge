@@ -32,12 +32,14 @@ class TextASTEncoder(ModalityEncoder):
         return torch.tensor(batch, dtype=torch.long, device=device)
 
     def forward(self, tokens: torch.Tensor, depths: Optional[torch.Tensor] = None,
-                modality: Optional[str] = None) -> LatentPacket:
+                modality: Optional[str] = None, pos_offset: int = 0) -> LatentPacket:
         tokens = tokens.clamp(0, self.vocab_size - 1)
         x = self.embed(tokens)
         if depths is not None:
             x = x + self.depth_embed(depths.clamp(0, 31))
         b, t = tokens.shape
-        # дискретные токены получают виртуальное время (равномерный такт)
-        time = torch.arange(t, device=tokens.device, dtype=x.dtype).expand(b, t) * 1e-3
+        # дискретные токены получают виртуальное время (равномерный такт);
+        # pos_offset нужен при потоковой генерации, чтобы такт не начинался заново
+        time = (torch.arange(t, device=tokens.device, dtype=x.dtype) + pos_offset)
+        time = time.expand(b, t) * 1e-3
         return LatentPacket(features=x, modality=modality or self.modality, time=time)

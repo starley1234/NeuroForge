@@ -51,7 +51,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 103 теста, ~50 с на CPU
+pytest -q                        # 114 тестов, ~35 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -230,7 +230,9 @@ curl -s -X POST localhost:8000/v1/jobs   -d '{"args":["train-lm","--epochs","1"]
 Эндпойнты: `/health`, `/metrics` (Prometheus), `/v1/models`, `/v1/generate`,
 `/v1/generate/stream` (SSE), `/v1/generate/batch`, `/v1/design`, `/v1/analyze`,
 `/v1/reward`, `/v1/reload`, `/v1/registry/promote|rollback`, `/v1/eval`,
-`/v1/jobs`, `/docs`, `/openapi.json`. Обучение идёт фоновой задачей, инференс
+`/v1/jobs`, `/docs`, `/openapi.json`. Генерация инкрементальная (кэш TTT + окно
+KV), поддерживает `top_p`, остановку по EOS и честно возвращает `quality_hint`,
+если версия недообучена. Обучение идёт фоновой задачей, инференс
 при этом не встаёт.
 Защита: `NEXUS_API_KEY=secret` включает `Authorization: Bearer`, плюс
 rate-limit по IP (`--rate-limit`). Ускорение: `--compile` (torch.compile).
@@ -381,7 +383,7 @@ nexus/
                             pretrain.py · train_fno.py · grpo.py · rewards.py
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
   eval/                     suite.py (quality gate) · needle.py · vram.py
-tests/                      103 теста: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      114 тестов: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd

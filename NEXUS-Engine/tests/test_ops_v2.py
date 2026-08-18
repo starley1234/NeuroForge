@@ -332,3 +332,61 @@ def test_amp_dtype_resolution():
     assert _resolve_amp_dtype("fp16", "cuda") is torch.float16
     assert _resolve_amp_dtype("bf16", "cuda") is torch.bfloat16
     assert _resolve_amp_dtype("auto", "cpu") is torch.float16
+
+
+# ────────────────────────────────── инкрементальная генерация и подсказки
+def test_incremental_generation_matches_full_recompute():
+    """Кэш состояния не меняет результат жадной генерации (chunk_size=1)."""
+    from nexus.config import NexusConfig, TTTConfig
+    from nexus.model import NexusEngine
+    cfg = NexusConfig.tiny()
+    cfg.ttt = TTTConfig(chunk_size=1, key_dim=16, value_dim=16, n_heads=2)
+    torch.manual_seed(0)
+    model = NexusEngine(cfg).eval()
+    ids = torch.randint(4, cfg.vocab_size, (1, 8))
+    a = model.generate(ids.clone(), 10, temperature=0.0, use_cache=False)
+    b = model.generate(ids.clone(), 10, temperature=0.0, use_cache=True)
+    assert torch.equal(a, b)
+
+
+def test_generation_stops_at_eos():
+    from nexus.config import NexusConfig
+    from nexus.model import NexusEngine
+    cfg = NexusConfig.tiny()
+    model = NexusEngine(cfg).eval()
+    ids = torch.randint(4, cfg.vocab_size, (1, 4))
+    first = int(model.generate(ids.clone(), 1, temperature=0.0)[0, -1])
+
+    stopped = model.generate(ids.clone(), 32, temperature=0.0, eos_id=first)
+    assert stopped.shape[1] == ids.shape[1] + 1          # остановились на первом же токене
+    full = model.generate(ids.clone(), 32, temperature=0.0)
+    assert full.shape[1] == ids.shape[1] + 32            # без eos генерируем всё
+
+
+def test_stream_yields_tokens_incrementally():
+    from nexus.config import NexusConfig
+    from nexus.model import NexusEngine
+    cfg = NexusConfig.tiny()
+    model = NexusEngine(cfg).eval()
+    ids = torch.randint(4, cfg.vocab_size, (1, 6))
+    tokens = list(model.stream(ids, max_new_tokens=5, temperature=0.7))
+    assert len(tokens) == 5 and all(t.shape == (1, 1) for t in tokens)
+
+
+def test_service_reports_quality_hint_for_undertrained_model(tmp_path):
+    from nexus.config import NexusConfig
+    from nexus.model import NexusEngine
+    from nexus.registry import ModelRegistry
+    from nexus.serve.service import InferenceService
+    reg = ModelRegistry(str(tmp_path / "reg"))
+    model = NexusEngine(NexusConfig.tiny())
+    reg.save("core", model.state_dict(), model.cfg.to_dict(),
+             metrics={"val_ppl": 480.0, "steps": 50})
+    svc = InferenceService(str(tmp_path / "reg"), "core", "latest")
+    out = svc.generate("<task>тест", max_new_tokens=4)
+    assert out["quality_hint"] and "недообучена" in out["quality_hint"]
+
+    reg.save("core", model.state_dict(), model.cfg.to_dict(),
+             metrics={"val_ppl": 12.0, "steps": 20000})
+    svc2 = InferenceService(str(tmp_path / "reg"), "core", "latest")
+    assert svc2.generate("<task>тест", max_new_tokens=4)["quality_hint"] is None
