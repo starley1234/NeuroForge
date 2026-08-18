@@ -117,6 +117,22 @@ def _cmd_vram(args) -> int:
     return 0
 
 
+def _cmd_optimize(args) -> int:
+    from .optimize import optimize_file
+    result = optimize_file(
+        args.file, out_path=args.out, force_n=tuple(args.force), fixture=args.fixture,
+        material=args.material, required_sf=args.safety, min_wall_mm=args.min_wall,
+        budget=args.budget, grid=args.grid, verify_grid=args.verify_grid,
+        span=args.span, only=args.params.split(",") if args.params else None,
+        mass_budget_g=args.mass_budget)
+    print()
+    print(result.summary())
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump(result.to_dict(), fh, indent=2, ensure_ascii=False)
+    return 0 if result.best.ok else 1
+
+
 def _cmd_bench(args) -> int:
     from .eval.bench import format_table, load_prompts, run_bench
     prompts = load_prompts(args.prompts, args.limit) if args.prompts else None
@@ -627,6 +643,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--serve", action="store_true", help="сразу поднять API после обучения")
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(fn=_cmd_quickstart)
+
+    p = sub.add_parser("optimize", help="подобрать параметры детали под нагрузку (МКЭ в цикле)")
+    p.add_argument("file", help="параметрический .scad")
+    p.add_argument("--out", default=None, help="куда сохранить оптимизированный код")
+    p.add_argument("--force", type=float, nargs=3, default=[0.0, 0.0, -200.0])
+    p.add_argument("--fixture", default="base", choices=["base", "bore", "face_x"])
+    p.add_argument("--material", default="pla")
+    p.add_argument("--safety", type=float, default=2.0, help="требуемый запас прочности")
+    p.add_argument("--min-wall", type=float, default=1.2)
+    p.add_argument("--budget", type=int, default=40, help="сколько вариантов просчитать")
+    p.add_argument("--grid", type=int, default=16, help="сетка при поиске")
+    p.add_argument("--verify-grid", type=int, default=26, help="сетка финальной проверки")
+    p.add_argument("--span", type=float, default=0.6, help="диапазон изменения, доля")
+    p.add_argument("--params", default=None, help="какие параметры крутить (через запятую)")
+    p.add_argument("--mass-budget", type=float, default=None)
+    p.add_argument("--json", default=None)
+    p.set_defaults(fn=_cmd_optimize)
 
     p = sub.add_parser("bench", help="A/B генераторов на реальных запросах с проверкой физикой")
     p.add_argument("--model", action="append", required=True,

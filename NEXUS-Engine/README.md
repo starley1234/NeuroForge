@@ -28,7 +28,8 @@
 Кто уже делает похожее и где мы на этом фоне —
 [docs/LANDSCAPE.md](docs/LANDSCAPE.md).
 План внедрения для действующего сервиса генерации —
-[docs/PLAN_TEXT_TO_3D.md](docs/PLAN_TEXT_TO_3D.md).
+[docs/PLAN_TEXT_TO_3D.md](docs/PLAN_TEXT_TO_3D.md), куда развивать дальше —
+[docs/WOW_PLAN.md](docs/WOW_PLAN.md).
 
 ```
 Уровень 1  Continuous Dynamic Encoders   AST-BPE · SSM-Audio/Video · B-Rep GNO · Point-SSM · Event-ODE · Neural-ODE био
@@ -60,7 +61,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 136 тестов, ~55 с на CPU
+pytest -q                        # 141 тест, ~60 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -108,6 +109,7 @@ nexus rl --steps 10                                     # фаза 4: GRPO с ф
 nexus needle --lengths 1024,8192,32768                  # O(1) память
 nexus ablate --steps 300                                # что даёт каждый блок (A/B)
 nexus bench --model nexus:core:production --model "command:claude -p" --prompts real.txt
+nexus optimize part.scad --force 0 0 -350 --safety 3.0   # подбор параметров под нагрузку
 nexus vram --preset rtx5060                             # бюджет VRAM
 ```
 
@@ -398,6 +400,7 @@ nexus/
                             ingest.py (импорт своих данных) · vision.py (рендер, PNG)
                             collect.py (дистилляция с проверкой) · flywheel.py · dataset.py
   mcp/                      server.py — MCP stdio-сервер (движок как инструменты)
+  optimize.py               подбор параметров детали под нагрузку (МКЭ в цикле)
   quickstart.py             сквозной сценарий «одной командой»
   registry.py               версии моделей, теги, откат, sha256
   training/                 trainer.py (общий цикл) · train_lm.py · distill.py
@@ -405,15 +408,15 @@ nexus/
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
   eval/                     suite.py (quality gate) · ablate.py (A/B блоков)
                             bench.py (A/B генераторов) · needle.py · vram.py
-tests/                      136 тестов: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      141 тест: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
 docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · PHYSICS_EXPLAINED.md
-                            LANDSCAPE.md · PLAN_TEXT_TO_3D.md · USE_CASES.md
-                            INGEST.md · TRAINING_GUIDE.md · DATA_PLAN.md
+                            LANDSCAPE.md · PLAN_TEXT_TO_3D.md · WOW_PLAN.md
+                            USE_CASES.md · INGEST.md · TRAINING_GUIDE.md · DATA_PLAN.md
                             architecture.md · training.md · api.md · operations.md
                             vram_budget.md · roadmap.md
 ```

@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: help install test demo flywheel ingest vision datasets gen-math collect mcp pretrain fno rl train-lm distill guide eval ablate serve registry needle vram
+.PHONY: help install test demo flywheel ingest vision optimize datasets gen-math collect mcp pretrain fno rl train-lm distill guide eval ablate serve registry needle vram
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/'
@@ -61,6 +61,9 @@ serve:  ## HTTP API на 0.0.0.0:8000
 
 registry:  ## содержимое реестра моделей
 	$(PY) -m nexus.cli registry list
+
+optimize:  ## подбор параметров детали под нагрузку: make optimize FILE=part.scad
+	$(PY) -m nexus.cli optimize $(FILE) --force 0 0 -300 --safety 2.0
 
 ablate:  ## A/B: что даёт каждый блок архитектуры
 	$(PY) -m nexus.cli ablate --steps 300

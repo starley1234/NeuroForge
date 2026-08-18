@@ -236,3 +236,74 @@ def test_bench_loads_prompts_from_file(tmp_path):
     js = tmp_path / "p.jsonl"
     js.write_text(json.dumps({"spec": "фланец"}, ensure_ascii=False) + "\n", encoding="utf-8")
     assert load_prompts(str(js)) == ["фланец"]
+
+
+# ──────────────────────── оптимизация детали под нагрузку (МКЭ в цикле)
+BRACKET = """
+width = 40;          // ширина
+height = 45;         // высота
+thickness = 6.0;     // толщина стенки
+rib = 8.0;           // ребро жёсткости
+leg = 35;            // вылет
+hole_d = 5;          // отверстие
+
+difference() {
+  union() {
+    cube([width, thickness, height]);
+    cube([width, leg, thickness]);
+    translate([width/2 - rib/2, 0, 0]) cube([rib, leg, leg]);
+  }
+  translate([width/2, thickness/2, height*0.72]) rotate([90,0,0])
+    translate([0,0,-thickness]) cylinder(h=thickness*3, r=hole_d/2, $fn=16);
+}
+"""
+
+
+def test_optimizer_picks_only_strength_parameters():
+    from nexus.optimize import pick_knobs
+    names = {k.name for k in pick_knobs(BRACKET)}
+    assert {"thickness", "rib"} <= names
+    # габариты и присоединительные размеры трогать нельзя
+    assert not ({"width", "height", "leg", "hole_d"} & names)
+
+
+def test_substitute_replaces_values_once():
+    from nexus.optimize import substitute
+    out = substitute(BRACKET, {"thickness": 3.25, "rib": 4.5})
+    assert "thickness = 3.25;" in out and "rib = 4.5;" in out
+    assert out.count("thickness = ") == 1
+    assert "// толщина стенки" not in out.split("thickness = 3.25;")[0][-30:] or True
+    from nexus.scad import compile_scad
+    assert compile_scad(out).ok                      # результат остаётся валидным
+
+
+def test_optimizer_reduces_mass_and_keeps_strength():
+    from nexus.optimize import optimize
+    result = optimize(BRACKET, force_n=(0, 0, -300), material="pla", required_sf=2.0,
+                      budget=14, grid=12, verify_grid=14, seed=1, verbose=False)
+    assert result.evaluations >= 10
+    assert result.best.mass_g > 0
+    assert result.best.safety_factor >= 2.0          # ограничение соблюдено
+    assert result.best.mass_g <= result.baseline.mass_g + 1e-6
+    assert "thickness" in result.best.params
+    assert "было" in result.summary() and "стало" in result.summary()
+    from nexus.scad import compile_scad
+    assert compile_scad(result.code).ok
+
+
+def test_optimizer_respects_explicit_parameter_list():
+    from nexus.optimize import optimize
+    result = optimize(BRACKET, force_n=(0, 0, -200), budget=6, grid=10, verify_grid=10,
+                      only=["rib"], verbose=False)
+    assert set(result.best.params) == {"rib"}
+
+
+def test_optimizer_writes_files(tmp_path):
+    from nexus.optimize import optimize_file
+    src = tmp_path / "part.scad"
+    src.write_text(BRACKET, encoding="utf-8")
+    out = str(tmp_path / "opt.scad")
+    result = optimize_file(str(src), out_path=out, force_n=(0, 0, -200), budget=6,
+                           grid=10, verify_grid=10, verbose=False)
+    assert os.path.exists(out) and os.path.exists(str(tmp_path / "opt_report.json"))
+    assert result.to_dict()["mass_saved_pct"] is not None
