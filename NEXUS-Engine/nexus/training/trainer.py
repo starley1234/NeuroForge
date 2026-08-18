@@ -36,7 +36,9 @@ class TrainConfig:
     clip: float = 1.0
     device: str = "auto"
     amp: bool = False
+    amp_dtype: str = "auto"              # auto | bf16 | fp16
     eight_bit: bool = False
+    max_nan_steps: int = 20              # подряд идущих NaN, после которых стоп
     log_every: int = 10
     eval_every: int = 0                  # 0 — только в конце эпохи
     patience: int = 0                    # 0 — без ранней остановки
@@ -69,6 +71,20 @@ def build_optimizer(model: torch.nn.Module, lr: float, wd: float, eight_bit: boo
         except Exception:
             print("[warn] bitsandbytes недоступен → обычный AdamW")
     return torch.optim.AdamW(groups, lr=lr, betas=(0.9, 0.95))
+
+
+def _resolve_amp_dtype(pref: str, device: str):
+    """bfloat16 предпочтительнее: не переполняется и не требует GradScaler."""
+    if pref == "fp16":
+        return torch.float16
+    if pref == "bf16":
+        return torch.bfloat16
+    try:
+        if device.startswith("cuda") and torch.cuda.is_bf16_supported():
+            return torch.bfloat16
+    except Exception:
+        pass
+    return torch.float16
 
 
 def cosine_lr(step: int, total: int, base: float, warmup: int) -> float:
@@ -116,7 +132,14 @@ class Trainer:
                         num_workers=cfg.num_workers, drop_last=False)
         total = cfg.max_steps or (len(dl) * cfg.epochs)
         opt = build_optimizer(self.model, cfg.lr, cfg.weight_decay, cfg.eight_bit)
-        scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and cfg.device.startswith("cuda"))
+        amp_on = bool(cfg.amp) and cfg.device.startswith("cuda")
+        amp_dtype = _resolve_amp_dtype(cfg.amp_dtype, cfg.device) if amp_on else None
+        # GradScaler нужен только для fp16: у bfloat16 диапазон как у fp32
+        scaler = torch.amp.GradScaler("cuda", enabled=amp_on and amp_dtype is torch.float16)
+        if amp_on:
+            print(f"[{cfg.stage}] смешанная точность: {str(amp_dtype).split('.')[-1]}",
+                  flush=True)
+        nan_streak = 0
 
         step, bad, t0 = 0, 0, time.time()
         stop = False
@@ -128,9 +151,26 @@ class Trainer:
                     g["lr"] = cosine_lr(step, total, cfg.lr, cfg.warmup)
                 batch = {k: v.to(cfg.device) for k, v in batch.items()}
                 reason = bool(cfg.reason_every) and (step % cfg.reason_every == 0)
-                with torch.amp.autocast("cuda", enabled=scaler.is_enabled()):
+                with torch.amp.autocast("cuda", enabled=amp_on,
+                                        dtype=amp_dtype or torch.float32):
                     stats = self.loss_fn(self.model, {**batch, "_reason": reason})  # type: ignore[arg-type]
                 loss = stats["loss"] / cfg.grad_accum
+
+                if not torch.isfinite(loss):
+                    nan_streak += 1
+                    opt.zero_grad(set_to_none=True)
+                    if nan_streak == 1:
+                        print(f"[{cfg.stage}] шаг {step}: loss = NaN/Inf, шаг пропущен. "
+                              f"Если повторяется — уменьшите --lr или отключите --amp",
+                              flush=True)
+                    if nan_streak >= cfg.max_nan_steps:
+                        raise RuntimeError(
+                            f"{nan_streak} шагов подряд с NaN — обучение остановлено. "
+                            f"Проверьте --lr (сейчас {cfg.lr}), данные и --amp")
+                    step += 1
+                    continue
+                nan_streak = 0
+
                 scaler.scale(loss).backward() if scaler.is_enabled() else loss.backward()
 
                 if (step + 1) % cfg.grad_accum == 0:

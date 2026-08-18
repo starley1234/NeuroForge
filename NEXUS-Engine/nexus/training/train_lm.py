@@ -89,6 +89,7 @@ def main() -> None:
                     help="сохранять последние веса вместо лучших по валидации")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--amp", action="store_true")
+    ap.add_argument("--amp-dtype", choices=["auto", "bf16", "fp16"], default="auto")
     ap.add_argument("--eight-bit", action="store_true")
     ap.add_argument("--registry", default="artifacts/registry")
     ap.add_argument("--promote", action="store_true", help="сразу пометить как production")
@@ -98,7 +99,8 @@ def main() -> None:
                 registry_root=a.registry, promote=a.promote, keep_best=not a.no_keep_best,
                 epochs=a.epochs, batch_size=a.batch_size, grad_accum=a.grad_accum,
                 lr=a.lr, max_steps=a.max_steps, eval_every=a.eval_every,
-                patience=a.patience, device=a.device, amp=a.amp, eight_bit=a.eight_bit)
+                patience=a.patience, device=a.device, amp=a.amp,
+                amp_dtype=a.amp_dtype, eight_bit=a.eight_bit)
     print(json.dumps(out, indent=2, ensure_ascii=False))
 
 

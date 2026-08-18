@@ -36,6 +36,14 @@ from ..registry import ModelRegistry, ModelVersion
 from ..scad.render import compile_scad
 
 
+def model_device(model: NexusEngine) -> torch.device:
+    """Устройство модели: тензоры приёмки должны жить там же, что и веса."""
+    try:
+        return next(model.parameters()).device
+    except StopIteration:                                   # pragma: no cover
+        return torch.device("cpu")
+
+
 @dataclass
 class Check:
     name: str
@@ -95,14 +103,17 @@ def _val_loss(model: NexusEngine, source: str, seq_len: int, limit: Optional[int
     ds = PackedLMDataset(source, tokenizer=tokenizer, seq_len=seq_len, limit=limit,
                          min_blocks=2)
     from torch.utils.data import DataLoader
+    device = model_device(model)
     dl = DataLoader(ds, batch_size=batch_size)
     total, n = 0.0, 0
     for batch in dl:
-        logits = model(tokens=batch["tokens"], reason=False).logits
+        tokens = batch["tokens"].to(device)
+        targets = batch["targets"].to(device)
+        logits = model(tokens=tokens, reason=False).logits
         loss = F.cross_entropy(logits.reshape(-1, logits.shape[-1]),
-                               batch["targets"].reshape(-1), ignore_index=0)
-        total += float(loss) * batch["tokens"].shape[0]
-        n += batch["tokens"].shape[0]
+                               targets.reshape(-1), ignore_index=0)
+        total += float(loss) * tokens.shape[0]
+        n += tokens.shape[0]
     return total / max(n, 1)
 
 
@@ -124,11 +135,12 @@ def run_suite(
     th = thresholds or SuiteThresholds()
     rep = SuiteReport(name, version, baseline=baseline)
     model.eval()
+    device = model_device(model)
     tok = tokenizer or DEFAULT_TOKENIZER
     prompts = prompts or ["<task>Кронштейн, сталь, 300 Н<scad>"]
 
     # 1. прямой проход
-    tokens = torch.randint(4, model.cfg.vocab_size, (1, min(64, seq_len)))
+    tokens = torch.randint(4, model.cfg.vocab_size, (1, min(64, seq_len)), device=device)
     logits = model(tokens=tokens, reason=False).logits
     finite = bool(torch.isfinite(logits).all())
     rep.add("forward_finite", finite, finite)
@@ -140,7 +152,7 @@ def run_suite(
     rep.add("val_ppl", round(ppl, 3), ppl <= th.max_val_ppl, th.max_val_ppl)
 
     # 3. генерация: не падает и не вырождается
-    ids = torch.tensor([tok.encode(prompts[0], bos=True)])
+    ids = torch.tensor([tok.encode(prompts[0], bos=True)], device=device)
     t0 = time.time()
     out = model.generate(ids, max_new_tokens=32, temperature=0.9)
     dt = (time.time() - t0) * 1000 / 32
@@ -167,7 +179,8 @@ def run_suite(
         processed = 0
         while processed < length:
             step = min(chunk, length - processed)
-            res = model(tokens=torch.randint(4, model.cfg.vocab_size, (1, step)),
+            res = model(tokens=torch.randint(4, model.cfg.vocab_size, (1, step),
+                                             device=device),
                         reason=False, states=states, use_state=True)
             states = res.states  # type: ignore[attr-defined]
             processed += step
@@ -181,7 +194,7 @@ def run_suite(
     compiled = 0
     for i in range(n_scad_samples):
         prompt = prompts[i % len(prompts)]
-        seq = torch.tensor([tok.encode(prompt, bos=True)])
+        seq = torch.tensor([tok.encode(prompt, bos=True)], device=device)
         gen = model.generate(seq, max_new_tokens=48, temperature=0.8)
         code = tok.decode(gen[0, seq.shape[1]:].tolist())
         compiled += int(compile_scad(code).ok)

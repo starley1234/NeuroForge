@@ -278,7 +278,7 @@ def _cmd_train_lm(args) -> int:
                 epochs=args.epochs, batch_size=args.batch_size, grad_accum=args.grad_accum,
                 lr=args.lr, max_steps=args.max_steps, eval_every=args.eval_every,
                 patience=args.patience, device=args.device, amp=args.amp,
-                eight_bit=args.eight_bit)
+                amp_dtype=args.amp_dtype, eight_bit=args.eight_bit)
     print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
     return 0
 
@@ -486,7 +486,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-keep-best", action="store_true",
                    help="сохранить последние веса вместо лучших по валидации")
     p.add_argument("--device", default="auto")
-    p.add_argument("--amp", action="store_true")
+    p.add_argument("--amp", action="store_true", help="смешанная точность на CUDA")
+    p.add_argument("--amp-dtype", choices=["auto", "bf16", "fp16"], default="auto",
+                   help="auto = bfloat16 на поддерживающих картах (стабильнее fp16)")
     p.add_argument("--eight-bit", action="store_true")
     p.add_argument("--registry", default="artifacts/registry")
     p.add_argument("--promote", action="store_true")

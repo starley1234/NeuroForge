@@ -44,17 +44,22 @@ class SparseMoE(nn.Module):
         topv, topi = torch.topk(probs, self.cfg.n_active, dim=-1)
         topv = topv / topv.sum(dim=-1, keepdim=True)
 
-        out = torch.zeros_like(flat)
+        # под автокастом эксперты возвращают half/bfloat16 — держим один dtype
+        sample_dtype = self.experts[0].w_down.weight.dtype if self.experts else flat.dtype
+        with torch.no_grad():
+            probe_dtype = torch.promote_types(flat.dtype, sample_dtype)
+        out = torch.zeros(flat.shape, dtype=probe_dtype, device=flat.device)
+        flat = flat.to(probe_dtype)
         for e, expert in enumerate(self.experts):
             hit = (topi == e)
             if not hit.any():
                 continue
             tok = hit.any(dim=-1).nonzero(as_tuple=True)[0]
             w = (topv * hit).sum(dim=-1)[tok].unsqueeze(-1)
-            out.index_add_(0, tok, expert(flat[tok]) * w)
+            out.index_add_(0, tok, (expert(flat[tok]) * w).to(out.dtype))
 
         for expert in self.shared:
-            out = out + expert(flat)
+            out = out + expert(flat).to(out.dtype)
 
         # Auxiliary losses: балансировка нагрузки + z-loss стабильности роутера.
         load = torch.zeros(self.cfg.n_experts, device=x.device, dtype=probs.dtype)
@@ -66,7 +71,8 @@ class SparseMoE(nn.Module):
         entropy = -(probs.clamp_min(1e-9).log() * probs).sum(-1).mean()
         aux = self.cfg.load_balance_loss * balance + self.cfg.router_z_loss * z_loss
 
-        return out.view(b, t, d), MoEStats(aux, entropy.detach(), frac_tokens.detach())
+        return out.view(b, t, d).to(x.dtype), MoEStats(aux, entropy.detach(),
+                                                      frac_tokens.detach())
 
     @property
     def active_param_fraction(self) -> float:

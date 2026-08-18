@@ -251,3 +251,84 @@ def test_quickstart_overrides_scale_defaults(tmp_path):
     assert res.steps["flywheel"]["total"] == 4
     assert res.steps["training"]["metrics"]["steps"] <= 3
     assert res.steps["tokenizer"]["vocab_size"] <= 620
+
+
+# ─────────────────────────────────── смешанная точность и устройства (GPU-путь)
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_model_is_finite_under_autocast(dtype):
+    """Под fp16/bf16 автокастом ни forward, ни градиенты не должны давать NaN."""
+    import torch.nn.functional as F
+    from nexus.config import NexusConfig
+    from nexus.model import NexusEngine
+    torch.manual_seed(0)
+    cfg = NexusConfig.tiny()
+    model = NexusEngine(cfg)
+    tokens = torch.randint(4, cfg.vocab_size, (2, 64))
+    with torch.autocast("cpu", dtype=dtype):
+        out = model(tokens=tokens, reason=True)
+        loss = F.cross_entropy(out.logits.reshape(-1, cfg.vocab_size).float(),
+                               tokens.reshape(-1))
+    assert torch.isfinite(loss)
+    loss.backward()
+    grads = [p.grad for p in model.parameters() if p.grad is not None]
+    assert grads and all(torch.isfinite(g).all() for g in grads)
+
+
+def test_ttt_runs_in_fp32_under_autocast():
+    from nexus.config import TTTConfig
+    from nexus.layers.ttt import FastWeightMemory
+    mem = FastWeightMemory(32, TTTConfig(chunk_size=8, key_dim=16, value_dim=16, n_heads=2))
+    x = torch.randn(1, 24, 32)
+    with torch.autocast("cpu", dtype=torch.float16):
+        y, state = mem(x, return_state=True)
+    assert torch.isfinite(y).all() and torch.isfinite(state.memory).all()
+    assert state.memory.dtype == torch.float32        # состояние всегда в fp32
+
+
+def test_moe_keeps_single_dtype_under_autocast():
+    from nexus.config import NexusConfig
+    from nexus.layers.moe import SparseMoE
+    moe = SparseMoE(48, NexusConfig.tiny().moe)
+    x = torch.randn(2, 8, 48)
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        y, stats = moe(x)
+    assert y.shape == x.shape and torch.isfinite(y).all()
+
+
+def test_suite_uses_model_device():
+    """Тензоры приёмки создаются на устройстве модели (иначе падало на CUDA)."""
+    from nexus.config import NexusConfig
+    from nexus.eval.suite import SuiteThresholds, model_device, run_suite
+    from nexus.model import NexusEngine
+    model = NexusEngine(NexusConfig.tiny())
+    assert model_device(model) == next(model.parameters()).device
+    rep = run_suite(model, "core", 1, seq_len=64, n_scad_samples=1,
+                    thresholds=SuiteThresholds(max_val_ppl=1e9, min_unique_ratio=0.0))
+    assert rep.passed
+
+
+def test_trainer_survives_nan_loss(tmp_path):
+    """NaN-шаги пропускаются, а серия NaN останавливает обучение с понятной ошибкой."""
+    from nexus.config import NexusConfig
+    from nexus.data.corpora import PackedLMDataset
+    from nexus.model import NexusEngine
+    from nexus.training.trainer import TrainConfig, Trainer
+
+    ds = PackedLMDataset("builtin:engineering", seq_len=32, min_blocks=4)
+    cfg = TrainConfig(max_steps=6, batch_size=1, grad_accum=1, log_every=100,
+                      max_nan_steps=3, registry_root=str(tmp_path))
+    model = NexusEngine(NexusConfig.tiny())
+
+    def broken_loss(m, batch):
+        return {"loss": torch.tensor(float("nan"), requires_grad=True)}
+
+    tr = Trainer(model, cfg, ds, loss_fn=broken_loss)
+    with pytest.raises(RuntimeError, match="NaN"):
+        tr.fit()
+
+
+def test_amp_dtype_resolution():
+    from nexus.training.trainer import _resolve_amp_dtype
+    assert _resolve_amp_dtype("fp16", "cuda") is torch.float16
+    assert _resolve_amp_dtype("bf16", "cuda") is torch.bfloat16
+    assert _resolve_amp_dtype("auto", "cpu") is torch.float16

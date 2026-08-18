@@ -206,6 +206,8 @@ docker compose up -d                       # поднять API на :8000
 | Есть RTX, но `CUDA: False` | стоит CPU-сборка torch: `git pull`, затем `.\nexus.ps1 gpu` (RTX 50xx → cu128) |
 | PowerShell: `POST /v1/analyze → 400` | `curl` там алиас `Invoke-WebRequest`; используйте `curl.exe`, `Invoke-RestMethod` или `/docs` |
 | «Модель ничего не выучила» | масштаб `nano`/`small` — это демо; берите `--scale medium` или `gpu` |
+| `loss=nan` на GPU | было в ревизиях до `e264ad6`; обновитесь (`git pull`) — теперь bfloat16 и защита от NaN |
+| Ошибка `index is on cpu ... cuda:0` | тоже исправлено: приёмка берёт устройство модели |
 | `sm_120 is not compatible` | старое колесо CUDA: нужен cu128 и torch ≥ 2.7 |
 | torch ставится очень долго | это ~800 МБ; для GPU-сборки `NEXUS_GPU=1 ./nexus.sh setup` |
 | `quickstart` завершился с «ПРОВАЛЕНО» | норма для `nano`: слишком мало шагов; берите `small` и выше |

@@ -18,6 +18,7 @@ KV-кэша, растущего как O(N)). α_t и η_t предсказыв�
 """
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -85,6 +86,22 @@ class FastWeightMemory(nn.Module):
         x: torch.Tensor,
         state: Optional[TTTState] = None,
         return_state: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[TTTState]]:
+        """Всегда считает в float32: кумулятивные суммы и экспоненты правила
+        дельты переполняют fp16 и дают NaN под автокастом."""
+        out_dtype = x.dtype
+        device_type = x.device.type
+        autocast_off = torch.autocast(device_type=device_type, enabled=False) \
+            if torch.is_autocast_enabled(device_type) else contextlib.nullcontext()
+        with autocast_off:
+            y, new_state = self._forward_fp32(x.float(), state, return_state)
+        return y.to(out_dtype), new_state
+
+    def _forward_fp32(
+        self,
+        x: torch.Tensor,
+        state: Optional[TTTState],
+        return_state: bool,
     ) -> Tuple[torch.Tensor, Optional[TTTState]]:
         b, t, _ = x.shape
         h = self.norm(x)

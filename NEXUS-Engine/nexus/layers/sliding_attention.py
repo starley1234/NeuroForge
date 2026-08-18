@@ -77,7 +77,7 @@ class SlidingWindowAttention(nn.Module):
         qi = torch.arange(s - t, s, device=x.device).unsqueeze(-1)
         ki = torch.arange(s, device=x.device).unsqueeze(0)
         allowed = (ki <= qi) & (ki > qi - self.cfg.window)
-        mask = torch.where(allowed, 0.0, float("-inf")).to(x.dtype)[None, None]
+        mask = torch.where(allowed, 0.0, float("-inf")).to(q.dtype)[None, None]
 
         y = F.scaled_dot_product_attention(q, k_full, v_full, attn_mask=mask)
         y = y.transpose(1, 2).reshape(b, t, self.n_heads * self.hd)
