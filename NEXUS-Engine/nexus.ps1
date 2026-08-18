@@ -1,117 +1,164 @@
-<#
-NEXUS-Engine — запуск под Windows (PowerShell).
+﻿# NEXUS-Engine launcher for Windows PowerShell.
+#
+#   .\nexus.ps1 setup        install venv + dependencies + self-check
+#   .\nexus.ps1 quickstart   data -> tokenizer -> training -> acceptance gate
+#   .\nexus.ps1 serve        HTTP API on 0.0.0.0:8000
+#   .\nexus.ps1 all          setup + quickstart + serve
+#   .\nexus.ps1 demo | test | doctor | analyze FILE.scad | cli ...
+#
+# If PowerShell blocks scripts:
+#   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+#   or:  .\nexus.cmd setup
 
-  .\nexus.ps1 setup        поставить окружение (venv + зависимости) и самопроверка
-  .\nexus.ps1 quickstart   данные -> токенизатор -> обучение -> приёмка
-  .\nexus.ps1 serve        HTTP API на 0.0.0.0:8000
-  .\nexus.ps1 all          setup + quickstart + serve
-  .\nexus.ps1 demo | test | doctor | analyze FILE.scad | cli ...
-
-Если PowerShell блокирует выполнение скриптов:
-  powershell -ExecutionPolicy Bypass -File .\nexus.ps1 setup
-#>
 param(
-  [Parameter(Position = 0)][string]$Command = "help",
-  [Parameter(Position = 1, ValueFromRemainingArguments = $true)][string[]]$Rest
+  [Parameter(Position = 0)]
+  [string]$Command = "help",
+  [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
+  [string[]]$Rest = @()
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location -Path $PSScriptRoot
+$env:PYTHONUTF8 = "1"
 
-$Venv  = if ($env:NEXUS_VENV)  { $env:NEXUS_VENV }  else { Join-Path $PSScriptRoot ".venv" }
-$Py    = Join-Path $Venv "Scripts\python.exe"
-$Pip   = Join-Path $Venv "Scripts\pip.exe"
-$Port  = if ($env:NEXUS_PORT)  { $env:NEXUS_PORT }  else { "8000" }
-$Scale = if ($env:NEXUS_SCALE) { $env:NEXUS_SCALE } else { "small" }
-$env:PYTHONUTF8 = "1"          # русский текст и рамки в консоли Windows
+$Venv = $env:NEXUS_VENV
+if (-not $Venv) { $Venv = Join-Path $PSScriptRoot ".venv" }
+$Py = Join-Path $Venv "Scripts\python.exe"
+$Pip = Join-Path $Venv "Scripts\pip.exe"
 
-function Info($m) { Write-Host "> $m" -ForegroundColor Cyan }
-function Ok($m)   { Write-Host "OK $m" -ForegroundColor Green }
-function Warn($m) { Write-Host "! $m"  -ForegroundColor Yellow }
-function Die($m)  { Write-Host "X $m"  -ForegroundColor Red; exit 1 }
+$Port = $env:NEXUS_PORT
+if (-not $Port) { $Port = "8000" }
+$Scale = $env:NEXUS_SCALE
+if (-not $Scale) { $Scale = "small" }
 
-function Find-Python {
-  foreach ($cand in @("python", "python3", "py")) {
-    $exe = Get-Command $cand -ErrorAction SilentlyContinue
-    if ($exe) {
-      $ver = & $cand -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
-      if ($ver -and [version]$ver -ge [version]"3.10") { return $cand }
+function Write-Info([string]$Text) { Write-Host ("-> " + $Text) -ForegroundColor Cyan }
+function Write-Ok([string]$Text) { Write-Host ("OK " + $Text) -ForegroundColor Green }
+function Write-Warn([string]$Text) { Write-Host ("!  " + $Text) -ForegroundColor Yellow }
+
+function Stop-WithError([string]$Text) {
+  Write-Host ("X  " + $Text) -ForegroundColor Red
+  exit 1
+}
+
+function Get-PythonExe {
+  $candidates = @("python", "python3", "py")
+  foreach ($name in $candidates) {
+    $found = Get-Command $name -ErrorAction SilentlyContinue
+    if ($null -eq $found) { continue }
+    $version = ""
+    try {
+      $version = & $name -c "import sys; print(str(sys.version_info[0]) + '.' + str(sys.version_info[1]))"
+    } catch {
+      $version = ""
+    }
+    if ($version) {
+      $parts = $version.Trim().Split(".")
+      $major = [int]$parts[0]
+      $minor = [int]$parts[1]
+      if ($major -eq 3 -and $minor -ge 10 -and $minor -le 13) { return $name }
+      Write-Warn ("skipping " + $name + " (Python " + $version.Trim() + "); need 3.10-3.13")
     }
   }
-  Die "не найден Python >= 3.10. Поставьте python.org/downloads или используйте conda."
+  Stop-WithError "Python 3.10-3.13 not found. Install from python.org or use: conda create -n nexus python=3.11"
 }
 
-function Require-Env {
-  if (-not (Test-Path $Py)) { Die "окружение не готово — запустите: .\nexus.ps1 setup" }
+function Test-Environment {
+  if (-not (Test-Path $Py)) {
+    Stop-WithError "environment is not ready - run:  .\nexus.ps1 setup"
+  }
 }
 
-function Invoke-Nexus([string[]]$CliArgs) {
-  Require-Env
+function Invoke-NexusCli([string[]]$CliArgs) {
+  Test-Environment
   & $Py -m nexus.cli @CliArgs
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-function Cmd-Setup {
+function Invoke-Setup {
   if (-not (Test-Path $Py)) {
-    $python = Find-Python
-    Info "создаю виртуальное окружение: $Venv"
+    $python = Get-PythonExe
+    Write-Info ("creating virtual environment: " + $Venv)
     & $python -m venv $Venv
-    if (-not (Test-Path $Py)) { Die "не удалось создать venv ($Venv)" }
-    & $Pip install --quiet --upgrade pip
+    if (-not (Test-Path $Py)) { Stop-WithError ("failed to create venv at " + $Venv) }
+    & $Py -m pip install --quiet --upgrade pip
   }
-  Info "устанавливаю зависимости (torch ~800 МБ, займёт несколько минут)"
+  Write-Info "installing dependencies (torch is ~800 MB, this takes a few minutes)"
   if ($env:NEXUS_GPU -eq "1") {
     & $Pip install --quiet torch --index-url https://download.pytorch.org/whl/cu124
-    if ($LASTEXITCODE -ne 0) { Warn "CUDA-сборка не поставилась, ставлю CPU-версию" }
+    if ($LASTEXITCODE -ne 0) { Write-Warn "CUDA build failed, falling back to CPU wheel" }
   }
   & $Pip install --quiet -e ".[dev]"
-  if ($LASTEXITCODE -ne 0) { Die "ошибка установки пакета" }
-  Ok "зависимости установлены"
-  Info "самопроверка окружения"
-  Invoke-Nexus @("doctor")
-  Info "быстрые тесты (~30 с)"
+  if ($LASTEXITCODE -ne 0) { Stop-WithError "package installation failed" }
+  Write-Ok "dependencies installed"
+
+  Write-Info "environment self-check"
+  Invoke-NexusCli @("doctor")
+
+  Write-Info "fast tests (~30 s)"
   & $Py -m pytest -q tests/test_core.py tests/test_geometry_scad.py
-  if ($LASTEXITCODE -ne 0) { Die "тесты не прошли" }
-  Ok "готово. Дальше: .\nexus.ps1 quickstart"
+  if ($LASTEXITCODE -ne 0) { Stop-WithError "tests failed" }
+  Write-Ok "ready. Next:  .\nexus.ps1 quickstart"
 }
 
-function Cmd-Quickstart { Invoke-Nexus (@("quickstart", "--scale", $Scale) + $Rest) }
-function Cmd-Serve {
-  Invoke-Nexus (@("serve", "--host", "0.0.0.0", "--port", $Port,
-                  "--registry", "artifacts/registry", "--model-name", "core",
-                  "--ref", "production", "--tokenizer", "artifacts/tokenizer/bpe.json") + $Rest)
+function Invoke-Quickstart {
+  $cliArgs = @("quickstart", "--scale", $Scale) + $Rest
+  Invoke-NexusCli $cliArgs
 }
-function Cmd-All { Cmd-Setup; Cmd-Quickstart; Info "поднимаю API на порту $Port"; Cmd-Serve }
+
+function Invoke-Serve {
+  $cliArgs = @("serve", "--host", "0.0.0.0", "--port", $Port,
+               "--registry", "artifacts/registry", "--model-name", "core",
+               "--ref", "production", "--tokenizer", "artifacts/tokenizer/bpe.json") + $Rest
+  Invoke-NexusCli $cliArgs
+}
 
 function Show-Usage {
-@"
-NEXUS-Engine — запуск (Windows)
-
-  .\nexus.ps1 setup                поставить окружение и проверить его
-  .\nexus.ps1 quickstart           данные -> токенизатор -> обучение -> приёмка
-                                   (масштаб: `$env:NEXUS_SCALE = "nano|small|medium|gpu")
-  .\nexus.ps1 serve                HTTP API на 0.0.0.0:$Port
-  .\nexus.ps1 all                  setup + quickstart + serve
-  .\nexus.ps1 demo                 демонстрация всех трёх уровней архитектуры
-  .\nexus.ps1 analyze FILE.scad    масса, аудит, FEM для детали
-  .\nexus.ps1 test                 тесты
-  .\nexus.ps1 doctor               диагностика окружения
-  .\nexus.ps1 cli ...              любая команда CLI (nexus --help)
-
-Переменные: NEXUS_VENV, NEXUS_PORT, NEXUS_SCALE, NEXUS_GPU=1, NEXUS_API_KEY
-"@ | Write-Host
+  $lines = @(
+    "NEXUS-Engine launcher (Windows)",
+    "",
+    "  .\nexus.ps1 setup                install environment and check it",
+    "  .\nexus.ps1 quickstart           data -> tokenizer -> training -> gate",
+    "  .\nexus.ps1 serve                HTTP API on 0.0.0.0:" + $Port,
+    "  .\nexus.ps1 all                  setup + quickstart + serve",
+    "  .\nexus.ps1 demo                 architecture demo (all three levels)",
+    "  .\nexus.ps1 analyze FILE.scad    mass, audit, FEM for a part",
+    "  .\nexus.ps1 test                 test suite",
+    "  .\nexus.ps1 doctor               environment diagnostics",
+    "  .\nexus.ps1 cli ...              any CLI command (nexus --help)",
+    "",
+    "Env vars: NEXUS_VENV, NEXUS_PORT, NEXUS_SCALE (nano|small|medium|gpu),",
+    "          NEXUS_GPU=1, NEXUS_API_KEY"
+  )
+  foreach ($line in $lines) { Write-Host $line }
 }
 
-switch ($Command.ToLower()) {
-  "setup"      { Cmd-Setup }
-  "quickstart" { Cmd-Quickstart }
-  "serve"      { Cmd-Serve }
-  "all"        { Cmd-All }
-  "demo"       { Invoke-Nexus (@("demo") + $Rest) }
-  "analyze"    { Invoke-Nexus (@("analyze") + $Rest) }
-  "doctor"     { Invoke-Nexus @("doctor") }
-  "test"       { Require-Env; & $Py -m pytest -q @Rest }
-  "cli"        { Invoke-Nexus $Rest }
-  { $_ -in @("help", "-h", "--help") } { Show-Usage }
-  default      { Warn "неизвестная команда: $Command"; Show-Usage; exit 1 }
+$action = $Command.ToLower()
+if ($action -eq "setup") {
+  Invoke-Setup
+} elseif ($action -eq "quickstart") {
+  Invoke-Quickstart
+} elseif ($action -eq "serve") {
+  Invoke-Serve
+} elseif ($action -eq "all") {
+  Invoke-Setup
+  Invoke-Quickstart
+  Write-Info ("starting API on port " + $Port)
+  Invoke-Serve
+} elseif ($action -eq "demo") {
+  Invoke-NexusCli (@("demo") + $Rest)
+} elseif ($action -eq "analyze") {
+  Invoke-NexusCli (@("analyze") + $Rest)
+} elseif ($action -eq "doctor") {
+  Invoke-NexusCli @("doctor")
+} elseif ($action -eq "test") {
+  Test-Environment
+  & $Py -m pytest -q @Rest
+} elseif ($action -eq "cli") {
+  Invoke-NexusCli $Rest
+} elseif ($action -eq "help" -or $action -eq "-h" -or $action -eq "--help") {
+  Show-Usage
+} else {
+  Write-Warn ("unknown command: " + $Command)
+  Show-Usage
+  exit 1
 }

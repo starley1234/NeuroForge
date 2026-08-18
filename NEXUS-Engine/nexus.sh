@@ -4,6 +4,9 @@
 #   ./nexus.sh quickstart   данные → токенизатор → обучение → приёмка (одна команда)
 #   ./nexus.sh serve        HTTP API на 0.0.0.0:8000
 #   ./nexus.sh demo|test|doctor|analyze FILE|cli ...
+# Если файл пришёл из Windows-чекаута с CRLF, bash выдаст
+#   env: $'bash\r': No such file or directory
+# Лечится один раз:  sed -i 's/\r$//' nexus.sh   (см. docs/QUICKSTART.md)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

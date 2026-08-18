@@ -36,6 +36,31 @@ powershell -ExecutionPolicy Bypass -File .\nexus.ps1 setup
 .\nexus.cmd setup
 ```
 
+### WSL / Git Bash на диске C:
+
+Если репозиторий склонирован под Windows (`core.autocrlf=true`), скрипт получает
+окончания строк CRLF, и bash падает:
+
+```
+env: $'bash\r': No such file or directory
+```
+
+Лечится один раз:
+
+```bash
+git pull                       # в репозитории теперь есть .gitattributes с eol=lf
+sed -i 's/\r$//' nexus.sh      # если файл уже лежал с CRLF
+chmod +x nexus.sh
+./nexus.sh setup
+```
+
+Совсем «в лоб», без скрипта:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m nexus.cli quickstart --scale small
+```
+
 Совсем без скриптов (работает и в conda-окружении):
 
 ```powershell
@@ -112,6 +137,8 @@ docker compose up -d                       # поднять API на :8000
 | В PowerShell `./nexus.sh` ничего не делает | это bash-скрипт; используйте `.\nexus.ps1` или `.\nexus.cmd` |
 | `выполнение сценариев отключено` | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | Windows: кракозябры в консоли | скрипт сам ставит `PYTHONUTF8=1`; вручную: `$env:PYTHONUTF8=1` |
+| PowerShell: `Отсутствует закрывающий знак "}"` | старый `nexus.ps1` без BOM; сделайте `git pull` (файл теперь ASCII + BOM + CRLF) |
+| WSL: `env: $'bash\r'` | CRLF-окончания: `sed -i 's/\r$//' nexus.sh` после `git pull` |
 | Python 3.13+ и torch не ставится | возьмите Python 3.11/3.12 (`py -3.11 -m venv .venv`) |
 | torch ставится очень долго | это ~800 МБ; для GPU-сборки `NEXUS_GPU=1 ./nexus.sh setup` |
 | `quickstart` завершился с «ПРОВАЛЕНО» | норма для `nano`: слишком мало шагов; берите `small` и выше |
