@@ -63,6 +63,17 @@ curl -X POST localhost:8000/v1/jobs -d '{"args":["train-lm","--epochs","1"]}'
 curl -X POST localhost:8000/v1/reload -d '{"model":"core","ref":"production"}'
 ```
 
+## Docker
+
+```bash
+docker compose --profile train up train   # данные + первая версия модели в ./artifacts
+docker compose up -d                      # API на :8000
+docker compose logs -f nexus
+```
+
+Реестр монтируется томом `./artifacts:/data`, поэтому версии переживают
+пересоздание контейнера. Ключ API — переменная `NEXUS_API_KEY`.
+
 ## Каталоги
 
 | Путь | Содержимое | В git |
@@ -72,6 +83,7 @@ curl -X POST localhost:8000/v1/reload -d '{"model":"core","ref":"production"}'
 | `artifacts/jobs/` | логи фоновых задач | нет |
 | `artifacts/cache/` | кэш логитов учителя | нет |
 | `artifacts/eval/` | отчёты приёмочных тестов | нет |
+| `artifacts/tokenizer/` | обученный BPE (`bpe.json`) | нет |
 
 Переменная `NEXUS_REGISTRY` меняет корень реестра по умолчанию.
 

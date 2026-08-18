@@ -66,6 +66,7 @@ class ModelVersion:
     dataset: str = ""
     stage: str = ""                          # pretrain | lm | distill | rl | fno
     notes: str = ""
+    tokenizer: str = ""                      # имя файла токенизатора в каталоге версии
     git_commit: str = ""
     sha256: str = ""
     size_bytes: int = 0
@@ -73,6 +74,13 @@ class ModelVersion:
     @property
     def weights(self) -> str:
         return os.path.join(self.path, "model.pt")
+
+    @property
+    def tokenizer_path(self) -> Optional[str]:
+        if not self.tokenizer:
+            return None
+        path = os.path.join(self.path, self.tokenizer)
+        return path if os.path.exists(path) else None
 
     @property
     def tag(self) -> str:
@@ -135,6 +143,7 @@ class ModelRegistry:
         dataset: str = "",
         stage: str = "",
         notes: str = "",
+        tokenizer_path: Optional[str] = None,
         extra: Optional[Dict[str, Any]] = None,
     ) -> ModelVersion:
         """Сохранить новую версию. Существующие версии никогда не затираются."""
@@ -151,12 +160,16 @@ class ModelRegistry:
             if extra:
                 payload.update(extra)
             torch.save(payload, weights)
+            tokenizer_name = ""
+            if tokenizer_path and os.path.exists(tokenizer_path):
+                tokenizer_name = "tokenizer.json"
+                shutil.copyfile(tokenizer_path, os.path.join(tmp, tokenizer_name))
             mv = ModelVersion(
                 name=name, version=version, path=target,
                 created=time.strftime("%Y-%m-%dT%H:%M:%S"), kind=kind,
                 metrics=dict(metrics or {}), config=config,
                 parent=parent if parent is not None else (self.versions(name)[-1] if self.versions(name) else None),
-                dataset=dataset, stage=stage, notes=notes,
+                dataset=dataset, stage=stage, notes=notes, tokenizer=tokenizer_name,
                 git_commit=_git_commit(), sha256=_sha256(weights),
                 size_bytes=os.path.getsize(weights),
             )

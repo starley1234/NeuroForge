@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
 
@@ -23,6 +23,7 @@ class LoadedModel:
     version: Optional[ModelVersion]
     key: str
     loaded_at: float
+    tokenizer: Any = None
 
 
 class InferenceService:
@@ -35,14 +36,18 @@ class InferenceService:
 
     def __init__(self, registry_root: str = "artifacts/registry",
                  default_model: str = "core", default_ref: str = "production",
-                 device: str = "cpu", preset: str = "tiny", max_cached: int = 2):
+                 device: str = "cpu", preset: str = "tiny", max_cached: int = 2,
+                 tokenizer_path: Optional[str] = None, compile_model: bool = False):
         self.registry = ModelRegistry(registry_root)
         self.default_model = default_model
         self.default_ref = default_ref
         self.device = device
         self.preset = preset
         self.max_cached = max_cached
-        self.tokenizer = DEFAULT_TOKENIZER
+        self.compile_model = compile_model
+        from ..data.bpe import load_tokenizer
+        self.tokenizer = load_tokenizer(tokenizer_path)
+        self.latency_ms: List[float] = []
         self._cache: Dict[str, LoadedModel] = {}
         self._lock = threading.Lock()
         self.started = time.time()
@@ -63,10 +68,17 @@ class InferenceService:
             try:
                 from ..training.trainer import load_model
                 model, mv = load_model(self.registry, name, ref, self.device)
-                loaded = LoadedModel(model, mv, key, time.time())
+                from ..data.bpe import load_tokenizer
+                tok = load_tokenizer(mv.tokenizer_path) if mv.tokenizer_path else self.tokenizer
+                loaded = LoadedModel(model, mv, key, time.time(), tok)
             except Exception:
                 model = NexusEngine(self._preset_config()).to(self.device).eval()
-                loaded = LoadedModel(model, None, key, time.time())
+                loaded = LoadedModel(model, None, key, time.time(), self.tokenizer)
+            if self.compile_model:
+                try:
+                    loaded.model = torch.compile(loaded.model)  # type: ignore[assignment]
+                except Exception as exc:                        # pragma: no cover
+                    print(f"[serve] torch.compile недоступен: {exc}")
             if len(self._cache) >= self.max_cached:
                 oldest = min(self._cache.values(), key=lambda m: m.loaded_at)
                 self._cache.pop(oldest.key, None)
@@ -86,11 +98,14 @@ class InferenceService:
                  ref: Optional[str] = None) -> Dict[str, Any]:
         self.requests += 1
         lm = self.get_model(model, ref)
-        ids = torch.tensor([self.tokenizer.encode(prompt, bos=True)], device=self.device)
+        tok = lm.tokenizer or self.tokenizer
+        ids = torch.tensor([tok.encode(prompt, bos=True)], device=self.device)
         t0 = time.time()
         out = lm.model.generate(ids, max_new_tokens=max_new_tokens,
                                 temperature=temperature, top_k=top_k)
-        text = self.tokenizer.decode(out[0, ids.shape[1]:].tolist())
+        text = tok.decode(out[0, ids.shape[1]:].tolist())
+        self.latency_ms.append((time.time() - t0) * 1000 / max(max_new_tokens, 1))
+        del self.latency_ms[:-500]
         return {
             "text": text, "prompt": prompt,
             "tokens_generated": int(out.shape[1] - ids.shape[1]),
@@ -127,6 +142,75 @@ class InferenceService:
         analysis = self.analyze(gen["text"], material=material, force=force)
         return {"generation": gen, "analysis": analysis,
                 "reward": self.reward(gen["text"], material, force)}
+
+    @torch.no_grad()
+    def generate_stream(self, prompt: str, max_new_tokens: int = 64,
+                        temperature: float = 0.8, top_k: int = 40,
+                        model: Optional[str] = None,
+                        ref: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+        """Потоковая генерация: по токену за шаг (для SSE)."""
+        self.requests += 1
+        lm = self.get_model(model, ref)
+        tok = lm.tokenizer or self.tokenizer
+        ids = torch.tensor([tok.encode(prompt, bos=True)], device=self.device)
+        produced: List[int] = []
+        for i in range(max_new_tokens):
+            ids = lm.model.generate(ids, max_new_tokens=1, temperature=temperature,
+                                    top_k=top_k)
+            token = int(ids[0, -1])
+            produced.append(token)
+            yield {"index": i, "token": token,
+                   "text": tok.decode([token]),
+                   "done": i == max_new_tokens - 1}
+        yield {"index": max_new_tokens, "text": "", "done": True,
+               "full_text": tok.decode(produced), "model": lm.key}
+
+    @torch.no_grad()
+    def generate_batch(self, prompts: List[str], max_new_tokens: int = 64,
+                       temperature: float = 0.8, top_k: int = 40,
+                       model: Optional[str] = None,
+                       ref: Optional[str] = None) -> Dict[str, Any]:
+        """Батч-инференс: один прогон модели на несколько промптов."""
+        self.requests += len(prompts)
+        lm = self.get_model(model, ref)
+        tok = lm.tokenizer or self.tokenizer
+        encoded = [tok.encode(p, bos=True) for p in prompts]
+        width = max(len(e) for e in encoded)
+        pad = tok.pad_id
+        batch = torch.tensor([[pad] * (width - len(e)) + e for e in encoded],
+                             device=self.device)
+        t0 = time.time()
+        out = lm.model.generate(batch, max_new_tokens=max_new_tokens,
+                                temperature=temperature, top_k=top_k)
+        texts = [tok.decode(row[width:].tolist()) for row in out]
+        return {"texts": texts, "count": len(texts), "model": lm.key,
+                "ms": round((time.time() - t0) * 1000, 2),
+                "ms_per_prompt": round((time.time() - t0) * 1000 / max(len(prompts), 1), 2)}
+
+    def metrics(self) -> str:
+        """Метрики в текстовом формате Prometheus."""
+        lat = sorted(self.latency_ms)
+        p50 = lat[len(lat) // 2] if lat else 0.0
+        p95 = lat[int(len(lat) * 0.95)] if lat else 0.0
+        lines = [
+            "# HELP nexus_requests_total Обработано запросов",
+            "# TYPE nexus_requests_total counter",
+            f"nexus_requests_total {self.requests}",
+            "# HELP nexus_uptime_seconds Время работы сервиса",
+            "# TYPE nexus_uptime_seconds gauge",
+            f"nexus_uptime_seconds {round(time.time() - self.started, 1)}",
+            "# HELP nexus_models_loaded Загруженных моделей в кэше",
+            "# TYPE nexus_models_loaded gauge",
+            f"nexus_models_loaded {len(self._cache)}",
+            "# HELP nexus_generation_latency_ms Латентность генерации на токен",
+            "# TYPE nexus_generation_latency_ms summary",
+            f'nexus_generation_latency_ms{{quantile="0.5"}} {round(p50, 3)}',
+            f'nexus_generation_latency_ms{{quantile="0.95"}} {round(p95, 3)}',
+        ]
+        for m in self._cache.values():
+            version = m.version.version if m.version else 0
+            lines.append(f'nexus_model_version{{model="{m.key}"}} {version}')
+        return "\n".join(lines) + "\n"
 
     # -------------------------------------------------------------- сервисное
     def health(self) -> Dict[str, Any]:

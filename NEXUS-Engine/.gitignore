@@ -7,3 +7,5 @@ artifacts/
 *.pt
 *.stl
 *.npz
+artifacts-ci/
+.venv*/

@@ -21,6 +21,9 @@ nexus serve --host 0.0.0.0 --port 8000 --model-name core --ref production
 | POST | `/v1/registry/promote` | `{model, ref, tag}` |
 | POST | `/v1/registry/rollback` | `{model, tag, steps}` |
 | POST | `/v1/eval` | `{model, ref, baseline, gate}` — приёмочные тесты |
+| POST | `/v1/generate/stream` | SSE: токены по мере генерации |
+| POST | `/v1/generate/batch` | `{prompts:[...]}` — один прогон на несколько запросов |
+| GET | `/metrics` | метрики в формате Prometheus |
 | POST | `/v1/jobs` | `{args:["train-lm","--max-steps","100"]}` → фоновая задача |
 | GET | `/v1/jobs`, `/v1/jobs/{id}` | список задач, статус и хвост лога |
 | POST | `/v1/jobs/{id}/cancel` | остановить задачу |
@@ -41,6 +44,21 @@ curl -s -X POST localhost:8000/v1/jobs \
   -d '{"args":["train-lm","--source","dir:./corpus","--epochs","1"]}'
 curl -s localhost:8000/v1/jobs/<id>
 ```
+
+## Защита и производительность
+
+```bash
+NEXUS_API_KEY=secret nexus serve --rate-limit 300 --compile
+curl -s localhost:8000/v1/models -H "Authorization: Bearer secret"
+curl -N -X POST localhost:8000/v1/generate/stream -d '{"prompt":"<task>вал","max_new_tokens":64}'
+```
+
+* `NEXUS_API_KEY` (или `--api-key`) включает проверку `Authorization: Bearer` /
+  `X-API-Key`; `/health` и `/` остаются открытыми для проб живости.
+* `--rate-limit N` — скользящее окно 60 с по IP (0 — выключить).
+* `--compile` — `torch.compile` модели при загрузке.
+* `/metrics` — счётчик запросов, аптайм, число загруженных моделей,
+  квантили латентности генерации, версия каждой активной модели.
 
 ## Поведение и ошибки
 

@@ -2,7 +2,15 @@
 
 **N**on-linear **E**pisodic e**X**tensible **U**nified **S**ystem for Physical Intelligence & Engineering — референсная реализация архитектуры **UniPhysical-Latent Framework**: непрерывные динамические энкодеры, физически инвариантное латентное ядро с $O(1)$ памятью и двухрежимный вывод «код + поля».
 
-Проект работает **на CPU из коробки** (все тесты — меньше 10 секунд) и масштабируется до профиля обучения на одной RTX 5060 16 ГБ.
+Проект работает **на CPU из коробки** и масштабируется до профиля обучения на одной RTX 5060 16 ГБ.
+
+```bash
+./nexus.sh setup        # окружение + самопроверка
+./nexus.sh quickstart   # данные → токенизатор → обучение → приёмка (~20 с)
+./nexus.sh serve        # HTTP API на http://localhost:8000
+```
+
+Пошагово и с разбором проблем — [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ```
 Уровень 1  Continuous Dynamic Encoders   AST-BPE · SSM-Audio/Video · B-Rep GNO · Point-SSM · Event-ODE · Neural-ODE био
@@ -18,7 +26,7 @@
 | :-- | :-- | :-- |
 | **Tokenization Tax** — 90 % вычислений на статический шум | Непрерывные SSM/ODE-энкодеры по реальному $\Delta t$ + «дельта новизны» вместо патчей | `nexus/encoders/base.py::GatedDeltaSSM`, `novelty_delta` |
 | **Потеря причинности** | Непрерывная ось времени $t$ в секундах, а не индекс токена; шина сортирует события по физическому времени | `nexus/layers/common.py::ContinuousTimeEmbedding`, `nexus/bus.py` |
-| **Слепота к 3D и физике** | SDF/CSG-ядро: объём, масса, центр масс, тензор инерции, полости, толщина стенки, свесы, достижимость фрезой; B-Rep/CSG граф | `nexus/geometry/*`, `nexus/scad/parser.py` |
+| **Слепота к 3D и физике** | SDF/CSG-ядро: объём, масса, центр масс, тензор инерции, полости, толщина стенки, свесы, достижимость фрезой; B-Rep/CSG граф; **настоящий МКЭ** на гексаэдрах (matrix-free CG), проверенный на аналитике | `nexus/geometry/*`, `nexus/scad/parser.py`, `nexus/fem/hex_fem.py` |
 | **Квадратичный KV-кэш** | Linear Fast-Weights (TTT): состояние фиксированного размера — на 64k контекста ×1710 компрессии против KV при recall 0.45 даже у необученной памяти | `nexus/layers/ttt.py`, `nexus/eval/needle.py` |
 | **Многословный CoT** | Latent Reasoning Loop с Adaptive Pondering и физическим зондом FNO | `nexus/reasoning/workspace.py` |
 | **OpenSCAD Data Flywheel** | Генератор вариаций → headless-рендер → аудит → пакетный FEM → обучающий кортеж | `nexus/scad/generator.py`, `nexus/data/flywheel.py` |
@@ -34,7 +42,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 65 тестов, ~30 с на CPU
+pytest -q                        # 78 тестов, ~40 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -58,7 +66,10 @@ python -m nexus.cli demo         # сквозная демонстрация в�
 ### CLI
 
 ```bash
+nexus doctor                             # диагностика окружения и самопроверка
+nexus quickstart --scale small           # всё сразу: данные → токенизатор → обучение → приёмка
 nexus info --preset rtx5060 --build      # конфиг, число параметров, бюджет VRAM, доступные бэкенды
+nexus train-tokenizer --source dir:./corpus --vocab-size 8192   # свой BPE
 nexus train-lm --source dir:./corpus     # обучение на стандартном датасете
 nexus distill --teacher Qwen/Qwen2.5-0.5B --mode logit   # дистилляция из LLM
 nexus eval --ref latest --baseline production --gate     # приёмочные тесты + промоушен
@@ -83,7 +94,21 @@ nexus vram --preset rtx5060                             # бюджет VRAM
 Полные инструкции — [docs/training.md](docs/training.md),
 [docs/operations.md](docs/operations.md), [docs/api.md](docs/api.md).
 
-### 3.1 Обучение на стандартном датасете
+### 3.1 Одна команда: `nexus quickstart`
+
+| Масштаб | Деталей | Шагов | Время (CPU) |
+| :-- | --: | --: | :-- |
+| `nano` | 8 | 8 | ~8 с |
+| `small` | 48 | 60 | ~20 с |
+| `medium` | 256 | 400 | ~10 мин |
+| `gpu` | 2000 | 4000 | часы на RTX 5060 |
+
+Проверяет окружение → строит датасет SCAD→3D→FEM → обучает BPE-токенизатор →
+обучает ядро → прогоняет приёмочные тесты → при успехе помечает версию
+`production`. Пример вывода `--scale small`: `val_ppl 942` против случайного
+базлайна `2048`, gate пройден, всё за 20 секунд.
+
+### 3.2 Обучение на стандартном датасете
 
 ```bash
 nexus train-lm --source builtin:engineering            # офлайн-корпус, работает сразу
@@ -96,7 +121,13 @@ nexus train-lm --source flywheel:artifacts/flywheel --resume latest    # доо�
 `hf:NAME[/CONFIG][:SPLIT]#field`. Общий тренер: grad-accum, косинусный LR с
 прогревом, AMP, 8-bit AdamW, ранняя остановка, автосохранение версии.
 
-### 3.2 Дистилляция из существующей LLM
+Токенизатор: `nexus train-tokenizer` обучает байтовый BPE на своём корпусе
+(в стиле minbpe: регексное пред-разбиение, lossless, JSON-формат). На инженерном
+корпусе он даёт ~4.1 байта/токен против ~2.5 у ручного AST-BPE — то есть
+последовательности короче, а обучение и инференс дешевле. Токенизатор
+сохраняется **вместе с версией модели** в реестре, так что перепутать их нельзя.
+
+### 3.3 Дистилляция из существующей LLM
 
 ```bash
 nexus distill --teacher Qwen/Qwen2.5-0.5B --mode logit     # KL по логитам + CE
@@ -109,7 +140,7 @@ nexus distill --teacher-nexus core --teacher-ref production --mode logit  # са
 автоматически переводится на словарь учителя. Учитель может быть любым классом
 с `logits()` и `generate_text()`.
 
-### 3.3 Реестр версий — ничего не теряется
+### 3.4 Реестр версий — ничего не теряется
 
 ```
 artifacts/registry/core/
@@ -124,7 +155,7 @@ artifacts/registry/core/
 * `load()` сверяет sha256; `prune` не трогает версии под тегами;
 * откат — переключение тега: `nexus registry rollback --tag production`.
 
-### 3.4 Автотесты дообученной модели (quality gate)
+### 3.5 Автотесты дообученной модели (quality gate)
 
 ```bash
 nexus eval --model-name core --ref latest --baseline production \
@@ -136,7 +167,7 @@ greedy, латентность, постоянство размера TTT-сос
 SCAD-генераций, регрессия к базовой версии. Тег `production` переключается
 **только** при полном прохождении; код возврата пригоден для CI.
 
-### 3.5 HTTP API
+### 3.6 HTTP API
 
 ```bash
 nexus serve --host 0.0.0.0 --port 8000 --ref production
@@ -145,9 +176,22 @@ curl -s -X POST localhost:8000/v1/jobs   -d '{"args":["train-lm","--epochs","1"]
 ```
 
 Без внешних веб-зависимостей (стандартная библиотека). `GET /` — мини-панель.
-Эндпойнты: `/health`, `/v1/models`, `/v1/generate`, `/v1/design`, `/v1/analyze`,
+Эндпойнты: `/health`, `/metrics` (Prometheus), `/v1/models`, `/v1/generate`,
+`/v1/generate/stream` (SSE), `/v1/generate/batch`, `/v1/design`, `/v1/analyze`,
 `/v1/reward`, `/v1/reload`, `/v1/registry/promote|rollback`, `/v1/eval`,
-`/v1/jobs`. Обучение запускается фоновой задачей, инференс при этом не встаёт.
+`/v1/jobs`. Обучение идёт фоновой задачей, инференс при этом не встаёт.
+Защита: `NEXUS_API_KEY=secret` включает `Authorization: Bearer`, плюс
+rate-limit по IP (`--rate-limit`). Ускорение: `--compile` (torch.compile).
+
+### 3.7 Docker
+
+```bash
+docker compose --profile train up train   # данные + первая версия модели
+docker compose up -d                      # API на :8000, реестр в ./artifacts
+```
+
+CI (`.github/workflows/ci.yml`): установка, `doctor`, полный `pytest`,
+сквозной `quickstart --scale nano` и выгрузка отчёта приёмки артефактом.
 
 ---
 
@@ -208,7 +252,15 @@ nexus flywheel -n 512 --out artifacts/flywheel --grid 24 --fem-grid 16
 
 Точность встроенной геометрии проверяется тестами: куб 20 мм даёт массу 20.7 г из аналитических 21.6 г (сетка 40³), толщина стенки восстанавливается как 3.04 мм для плиты 3 мм и 2.17 мм для трубы со стенкой 2 мм.
 
-**Load-path решатель** (`fem/solver.py`) решает $\nabla\cdot(k\nabla\varphi)=0$ по материалу с $\varphi=1$ на площадке нагрузки и $\varphi=0$ на закреплении; поток $|\nabla\varphi|$ нормируется по силе и сечению и калибруется поправкой на изгибающий момент. Это суррогат, воспроизводящий концентрации у отверстий и перемычек — для «настоящих» цифр ставьте CalculiX, адаптер подхватит его автоматически (`fem/calculix.py`).
+**Три FEM-бэкенда** (`--fem auto|hex|loadpath|calculix`):
+
+* `hex` — **настоящий МКЭ**: трилинейные гексаэдры C3D8, matrix-free CG с якобиевым
+  предобуславливателем, одна матрица жёсткости на все воксели (`fem/hex_fem.py`).
+  Валидация на аналитике: брус 10×10×40 мм под 500 Н даёт σ 4.45 МПа против
+  5.00 расчётных и δ 0.00266 мм против 0.0029 — сходимость за 130 итераций, 0.2 с;
+  концентрация напряжений у отверстия воспроизводится (проверено тестом).
+* `loadpath` — быстрый суррогат переноса силового потока (для массового прогона наград).
+* `calculix` — внешний `ccx`, если установлен.
 
 ---
 
@@ -266,17 +318,22 @@ nexus/
   surrogates/fno.py         FNO-3D и FEM-критик
   geometry/                 csg.py (SDF) · voxel.py (масса, аудит) · brep.py (граф, STL)
   scad/                     parser.py · generator.py · render.py
-  fem/                      solver.py (load-path) · calculix.py (адаптер ccx)
-  data/                     tokenizer.py · flywheel.py · dataset.py
+  fem/                      hex_fem.py (МКЭ, matrix-free CG) · solver.py · calculix.py
+  data/                     tokenizer.py · bpe.py (обучаемый BPE) · corpora.py
+                            flywheel.py · dataset.py
+  quickstart.py             сквозной сценарий «одной командой»
   registry.py               версии моделей, теги, откат, sha256
   training/                 trainer.py (общий цикл) · train_lm.py · distill.py
                             pretrain.py · train_fno.py · grpo.py · rewards.py
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
   eval/                     suite.py (quality gate) · needle.py · vram.py
-tests/                      65 тестов: геометрия, ядро, пайплайн, реестр, обучение, API
+tests/                      78 тестов: геометрия, ядро, пайплайн, реестр, обучение,
+                            API, BPE, МКЭ, quickstart
+nexus.sh                    единая точка запуска (setup / quickstart / serve / …)
+Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       architecture.md · training.md · api.md · operations.md
-                            vram_budget.md · roadmap.md
+docs/                       QUICKSTART.md · architecture.md · training.md · api.md
+                            operations.md · vram_budget.md · roadmap.md
 ```
 
 ---
@@ -288,21 +345,27 @@ docs/                       architecture.md · training.md · api.md · operatio
 * Парсер OpenSCAD покрывает подмножество языка (примитивы, булевы операции, трансформации, переменные, арифметика); `hull`/`minkowski` аппроксимируются содержимым.
 * Энкодеры аудио/видео/3DGS/DVS/биометрии реализованы как рабочие модули уровня 1 с корректной непрерывной динамикой, но обучающих корпусов для них в репозитории нет.
 
-### Чего не хватает для комфортной эксплуатации
+### Что закрыто в этой итерации
 
-Приоритет сверху вниз — так и стоит закрывать.
+| Было | Стало |
+| :-- | :-- |
+| ручной токенизатор | обучаемый байтовый BPE (`nexus train-tokenizer`), хранится вместе с версией модели |
+| суррогатный FEM | настоящий МКЭ на гексаэдрах (matrix-free CG), сверен с аналитикой |
+| API без защиты | ключ `NEXUS_API_KEY`, rate-limit, SSE-стриминг, батч-инференс, `/metrics` |
+| нет запуска «из коробки» | `./nexus.sh setup/quickstart/serve/all`, `nexus doctor`, Docker, CI |
+| стартовый loss ~40 | GPT-2-инициализация: старт ≈ ln(V), обучение реально сходится |
+| парсер без циклов | поддержаны `for (i = [a:step:b])` и списки |
 
-| # | Чего нет | Почему это важно | Оценка |
+### Чего ещё не хватает
+
+| # | Чего нет | Почему важно | Оценка |
 | :-- | :-- | :-- | :-- |
-| 1 | **Обученных весов и большого корпуса** | всё остальное готово, но модель пока «пустая»; нужен сбор 10–100 ГБ кода/CAD/документации и прогон фазы 3 на GPU | недели GPU-времени |
-| 2 | **Токенизатор, обученный на корпусе** | сейчас байтовый BPE с ручными мёржами: последовательности длиннее в 2–3 раза, чем могли бы быть | 1–2 дня |
-| 3 | **Аутентификация и лимиты в API** | сервис рассчитан на закрытый контур: нет токенов, квот, rate-limit, TLS | 1–2 дня |
-| 4 | **Ускоренные ядра TTT/MoE** | сейчас чистый PyTorch; Triton/CUDA-ядра для чанкового скана и группировки экспертов дадут 3–10× | 1–2 недели |
-| 5 | **Настоящий МКЭ вместо суррогата** | load-path решатель хорош для наград, но не для сертификации; нужен CalculiX в контуре или собственный решатель на гексаэдрах | 1–2 недели |
-| 6 | **Батч-инференс и потоковая генерация (SSE)** | сейчас запросы обрабатываются по одному, ответ отдаётся целиком | 2–4 дня |
-| 7 | **Контейнеризация и CI** | Dockerfile, GitHub Actions с прогоном тестов и gate-проверкой, публикация артефактов | 1–2 дня |
-| 8 | **Метрики Prometheus/Grafana** | сейчас только `/health` и логи; нет гистограмм латентности и алертов | 1–2 дня |
-| 9 | **Marching cubes и STEP/IGES** | воксельный STL груб для реального производства; нужен OpenCascade для B-Rep импорта/экспорта | 1 неделя |
-| 10 | **Датасеты для остальных модальностей** | энкодеры аудио/видео/3DGS/DVS/биометрии работают, но учить их не на чем | зависит от домена |
+| 1 | **Обученных весов и большого корпуса** | инфраструктура готова, нужен сбор 10–100 ГБ кода/CAD/документации и прогон на GPU | недели GPU |
+| 2 | **Ускоренных ядер TTT/MoE** (Triton/CUDA) | чистый PyTorch; фьюзинг чанкового скана и группировка экспертов дадут 3–10× | 1–2 недели |
+| 3 | **Multigrid-предобуславливателя для МКЭ** | сейчас Jacobi+CG: сетки крупнее 48³ считаются секундами, а не миллисекундами | 3–5 дней |
+| 4 | **Marching cubes и STEP/IGES** | воксельный STL груб для производства; нужен OpenCascade для B-Rep | 1 неделя |
+| 5 | **Датасетов для остальных модальностей** | энкодеры аудио/видео/3DGS/DVS/биометрии работают, учить не на чем | зависит от домена |
+| 6 | **Распределённого обучения (FSDP/DeepSpeed)** | сейчас одна карта; для 1.3B+ на нескольких GPU нужен шардинг | 3–5 дней |
+| 7 | **Веб-UI поверх API** | сейчас только curl и мини-панель; конструктор ТЗ → деталь → отчёт был бы нагляднее | 1 неделя |
 
 Лицензия: MIT.

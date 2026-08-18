@@ -1,0 +1,19 @@
+services:
+  nexus:
+    build: .
+    image: nexus-engine:latest
+    ports: ["8000:8000"]
+    volumes: ["./artifacts:/data"]
+    environment:
+      NEXUS_API_KEY: "${NEXUS_API_KEY:-}"
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000",
+              "--registry", "/data/registry", "--tokenizer", "/data/tokenizer/bpe.json"]
+    restart: unless-stopped
+
+  # разовая задача: подготовить данные, токенизатор и первую версию модели
+  train:
+    build: .
+    image: nexus-engine:latest
+    volumes: ["./artifacts:/data"]
+    command: ["quickstart", "--scale", "small", "--workdir", "/data"]
+    profiles: ["train"]

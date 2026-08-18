@@ -1,10 +1,13 @@
 """Пакетный расчёт напряжений на воксельной сетке.
 
-Два бэкенда:
+Три бэкенда (выбор через `backend=`):
 
-1. **CalculiX** (`ccx`) — если бинарник доступен, генерируется .inp-дека из
-   гексаэдральной сетки и решается линейная статика (nexus.fem.calculix).
-2. **Load-path solver** (встроенный, всегда доступен) — стационарная задача
+1. **hex** — встроенный МКЭ: трилинейные гексаэдры, matrix-free CG с якобиевым
+   предобуславливателем (nexus.fem.hex_fem). Даёт настоящие перемещения и
+   напряжения, проверен на аналитике растяжения/изгиба бруса.
+2. **CalculiX** (`ccx`) — если бинарник доступен, генерируется .inp-дека и
+   решается линейная статика (nexus.fem.calculix).
+3. **loadpath** — быстрый суррогат переноса силового потока — стационарная задача
    переноса силового потока:
 
        ∇·(k ∇φ) = 0,  k = 1 в материале, 0 в пустоте,
@@ -148,6 +151,34 @@ def solve_loadpath(
     return FEMResult(von_mises, max_s, mean_s, mat["yield"], sf, disp, converged, it)
 
 
+def solve_fem(
+    vox: VoxelModel,
+    force_n: Tuple[float, float, float],
+    fixture: str = "base",
+    material: str = "pla",
+    max_iter: int = 400,
+) -> FEMResult:
+    """Настоящий МКЭ на гексаэдрах (matrix-free CG)."""
+    from .hex_fem import solve_hex_fem
+
+    mat = MATERIALS.get(material, MATERIALS["pla"])
+    r = solve_hex_fem(vox, force_n, fixture, material, max_iter=max_iter)
+    return FEMResult(
+        von_mises=r.von_mises,
+        max_stress_pa=r.max_stress_pa,
+        mean_stress_pa=r.mean_stress_pa,
+        yield_pa=mat["yield"],
+        safety_factor=mat["yield"] / max(r.max_stress_pa, 1e-6),
+        displacement_mm=r.max_displacement_mm,
+        converged=r.converged,
+        iterations=r.iterations,
+        backend="hex",
+    )
+
+
+AUTO_HEX_MAX_ELEMENTS = 60_000     # выше — переключаемся на быстрый суррогат
+
+
 def solve(
     vox: VoxelModel,
     force_n: Tuple[float, float, float],
@@ -155,13 +186,27 @@ def solve(
     material: str = "pla",
     prefer_calculix: bool = False,
     iterations: int = 400,
+    backend: str = "auto",
 ) -> FEMResult:
-    if prefer_calculix:
+    """backend: auto | hex | loadpath | calculix."""
+    if backend == "calculix" or prefer_calculix:
         from .calculix import available, solve_with_calculix
         if available():
             res: Optional[FEMResult] = solve_with_calculix(vox, force_n, fixture, material)
             if res is not None:
                 return res
+        if backend == "calculix":
+            backend = "hex"
+
+    if backend == "loadpath":
+        return solve_loadpath(vox, force_n, fixture, material, iterations=iterations)
+
+    n_elements = int(np.prod(vox.occupancy.shape))
+    if backend == "hex" or (backend == "auto" and n_elements <= AUTO_HEX_MAX_ELEMENTS):
+        try:
+            return solve_fem(vox, force_n, fixture, material, max_iter=iterations)
+        except (MemoryError, ValueError) as exc:  # запасной путь
+            print(f"[fem] hex-бэкенд не сработал ({exc}), переключаюсь на loadpath")
     return solve_loadpath(vox, force_n, fixture, material, iterations=iterations)
 
 

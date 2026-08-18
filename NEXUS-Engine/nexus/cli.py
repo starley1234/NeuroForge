@@ -58,7 +58,7 @@ def _cmd_analyze(args) -> int:
         print(json.dumps({"ok": False, "error": res.error}, ensure_ascii=False, indent=2))
         return 1
     fem = solve(res.voxels, tuple(args.force), args.fixture, args.material,
-                prefer_calculix=args.calculix)
+                prefer_calculix=args.calculix, backend=args.fem)
     print(json.dumps({**res.summary(), "fem": fem.to_dict()}, indent=2, ensure_ascii=False))
     return 0
 
@@ -116,6 +116,65 @@ def _cmd_vram(args) -> int:
     return 0
 
 
+def _cmd_quickstart(args) -> int:
+    from .quickstart import run_quickstart
+    res = run_quickstart(args.scale, args.model_name, args.workdir, args.device,
+                         skip_data=args.skip_data, serve_after=args.serve, port=args.port)
+    return 0 if res.ready else 1
+
+
+def _cmd_tokenizer(args) -> int:
+    from .data.bpe import train_from_source
+    _, stats = train_from_source(args.source, args.vocab_size, args.out,
+                                 limit=args.limit, max_chars=args.max_chars)
+    print(json.dumps(stats, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _cmd_doctor(args) -> int:
+    """Диагностика окружения: что установлено, что работает, чего не хватает."""
+    import platform
+    import shutil
+    import torch
+
+    from .config import NexusConfig
+    from .eval.vram import estimate
+    from .fem.calculix import available as ccx
+    from .scad.render import openscad_binary
+
+    checks = {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "torch": torch.__version__,
+        "cuda_available": torch.cuda.is_available(),
+        "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "cpu_threads": torch.get_num_threads(),
+        "openscad": openscad_binary() or "нет (используется встроенный CSG-движок)",
+        "calculix": "есть" if ccx() else "нет (используется встроенный МКЭ на гексаэдрах)",
+        "bitsandbytes": bool(shutil.which("python") and _module_available("bitsandbytes")),
+        "transformers": _module_available("transformers"),
+        "datasets": _module_available("datasets"),
+        "vram_budget_rtx5060_gb": estimate(NexusConfig.rtx5060()).total_gb,
+    }
+    # быстрый функциональный тест
+    try:
+        from .scad.render import render
+        from .fem.solver import solve
+        res = render("cube([20,20,20],center=true);", resolution=12)
+        fem = solve(res.voxels, (0, 0, -100.0), backend="hex")
+        checks["selftest"] = {"ok": res.ok, "fem_backend": fem.backend,
+                              "sigma_max_mpa": round(fem.max_stress_pa / 1e6, 3)}
+    except Exception as exc:
+        checks["selftest"] = {"ok": False, "error": str(exc)}
+    print(json.dumps(checks, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _module_available(name: str) -> bool:
+    import importlib.util
+    return importlib.util.find_spec(name) is not None
+
+
 def _cmd_demo(args) -> int:
     from .demo import run_demo
     run_demo(out_dir=args.out, n_samples=args.n)
@@ -125,7 +184,8 @@ def _cmd_demo(args) -> int:
 def _cmd_train_lm(args) -> int:
     from .training.train_lm import train
     out = train(args.source, args.model_name, args.preset, args.resume, args.seq_len,
-                args.limit, registry_root=args.registry, promote=args.promote,
+                args.limit, tokenizer_path=args.tokenizer,
+                registry_root=args.registry, promote=args.promote,
                 epochs=args.epochs, batch_size=args.batch_size, grad_accum=args.grad_accum,
                 lr=args.lr, max_steps=args.max_steps, eval_every=args.eval_every,
                 patience=args.patience, device=args.device, amp=args.amp,
@@ -197,7 +257,9 @@ def _cmd_registry(args) -> int:
 def _cmd_serve(args) -> int:
     from .serve.app import serve
     serve(args.host, args.port, registry_root=args.registry, model=args.model_name,
-          ref=args.ref, device=args.device, preset=args.preset)
+          ref=args.ref, device=args.device, preset=args.preset,
+          api_key=args.api_key, rate_limit=args.rate_limit,
+          tokenizer=args.tokenizer, compile_model=args.compile)
     return 0
 
 
@@ -230,6 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stl", default=None)
     p.add_argument("--openscad", action="store_true")
     p.add_argument("--calculix", action="store_true")
+    p.add_argument("--fem", choices=["auto", "hex", "loadpath", "calculix"], default="auto")
     p.set_defaults(fn=_cmd_analyze)
 
     p = sub.add_parser("reward", help="физическая награда для .scad (как в RL)")
@@ -292,6 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
     p.add_argument("--resume", default=None, help="версия/тег для дообучения")
     p.add_argument("--seq-len", type=int, default=512)
+    p.add_argument("--tokenizer", default=None, help="обученный BPE (artifacts/tokenizer/bpe.json)")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--batch-size", type=int, default=2)
@@ -365,7 +429,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
     p.add_argument("--registry", default="artifacts/registry")
     p.add_argument("--device", default="cpu")
+    p.add_argument("--api-key", default=None, help="или переменная окружения NEXUS_API_KEY")
+    p.add_argument("--rate-limit", type=int, default=120)
+    p.add_argument("--tokenizer", default=None)
+    p.add_argument("--compile", action="store_true", help="torch.compile для ускорения")
     p.set_defaults(fn=_cmd_serve)
+
+    p = sub.add_parser("quickstart", help="всё за одну команду: данные → токенизатор → обучение → приёмка")
+    p.add_argument("--scale", choices=["nano", "small", "medium", "gpu"], default="small")
+    p.add_argument("--model-name", default="core")
+    p.add_argument("--workdir", default="artifacts")
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--skip-data", action="store_true", help="использовать уже готовый датасет")
+    p.add_argument("--serve", action="store_true", help="сразу поднять API после обучения")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(fn=_cmd_quickstart)
+
+    p = sub.add_parser("doctor", help="диагностика окружения и самопроверка")
+    p.set_defaults(fn=_cmd_doctor)
+
+    p = sub.add_parser("train-tokenizer", help="обучить BPE-токенизатор на корпусе")
+    p.add_argument("--source", default="builtin:engineering")
+    p.add_argument("--vocab-size", type=int, default=4096)
+    p.add_argument("--out", default="artifacts/tokenizer/bpe.json")
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--max-chars", type=int, default=2_000_000)
+    p.set_defaults(fn=_cmd_tokenizer)
 
     p = sub.add_parser("demo", help="сквозная демонстрация всех трёх уровней")
     p.add_argument("--out", default="artifacts/demo")

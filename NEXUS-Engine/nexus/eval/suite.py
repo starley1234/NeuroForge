@@ -89,8 +89,9 @@ class SuiteThresholds:
 
 @torch.no_grad()
 def _val_loss(model: NexusEngine, source: str, seq_len: int, limit: Optional[int],
-              batch_size: int = 2) -> float:
-    ds = PackedLMDataset(source, seq_len=seq_len, limit=limit, min_blocks=2)
+              batch_size: int = 2, tokenizer=None) -> float:
+    ds = PackedLMDataset(source, tokenizer=tokenizer, seq_len=seq_len, limit=limit,
+                         min_blocks=2)
     from torch.utils.data import DataLoader
     dl = DataLoader(ds, batch_size=batch_size)
     total, n = 0.0, 0
@@ -115,11 +116,12 @@ def run_suite(
     baseline: Optional[Dict[str, float]] = None,
     prompts: Optional[List[str]] = None,
     n_scad_samples: int = 4,
+    tokenizer=None,
 ) -> SuiteReport:
     th = thresholds or SuiteThresholds()
     rep = SuiteReport(name, version, baseline=baseline)
     model.eval()
-    tok = DEFAULT_TOKENIZER
+    tok = tokenizer or DEFAULT_TOKENIZER
     prompts = prompts or ["<task>Кронштейн, сталь, 300 Н<scad>"]
 
     # 1. прямой проход
@@ -129,7 +131,7 @@ def run_suite(
     rep.add("forward_finite", finite, finite)
 
     # 2. перплексия
-    loss = _val_loss(model, source, seq_len, limit)
+    loss = _val_loss(model, source, seq_len, limit, tokenizer=tok)
     ppl = math.exp(min(loss, 20))
     rep.metrics.update({"val_loss": round(loss, 5), "val_ppl": round(ppl, 3)})
     rep.add("val_ppl", round(ppl, 3), ppl <= th.max_val_ppl, th.max_val_ppl)
@@ -208,20 +210,23 @@ def evaluate_version(
 
     registry = ModelRegistry(registry_root)
     model, mv = load_model(registry, name, ref, device)
+    from ..data.bpe import load_tokenizer
+    tokenizer = load_tokenizer(mv.tokenizer_path)
 
     base_metrics: Optional[Dict[str, float]] = None
     if baseline_ref:
         try:
             base_model, base_mv = load_model(registry, name, baseline_ref, device)
             base_report = run_suite(base_model, name, base_mv.version, source, seq_len,
-                                    thresholds=SuiteThresholds(), n_scad_samples=2)
+                                    thresholds=SuiteThresholds(), n_scad_samples=2,
+                                    tokenizer=load_tokenizer(base_mv.tokenizer_path))
             base_metrics = base_report.metrics
         except Exception as exc:  # базовой версии может ещё не быть
             base_metrics = None
             print(f"[eval] базовая версия недоступна: {exc}")
 
     report = run_suite(model, name, mv.version, source, seq_len,
-                       thresholds=thresholds, baseline=base_metrics)
+                       thresholds=thresholds, baseline=base_metrics, tokenizer=tokenizer)
     report.metrics["sha256_ok"] = 1.0
     if gate and report.passed:
         registry.promote(name, mv.version, promote_tag, reason="quality gate passed")

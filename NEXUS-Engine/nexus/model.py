@@ -34,6 +34,30 @@ class NexusEngine(nn.Module):
         # --- уровень 3 ---
         self.lm_head = DiscreteHead(self.cfg, self.text_encoder.embed)
         self.continuous_head = ContinuousHead(self.cfg)
+        self.apply(self._init_weights)
+        self._scale_residual_projections()
+
+    # ------------------------------------------------------- инициализация
+    @staticmethod
+    def _init_weights(module: nn.Module) -> None:
+        """GPT-2-подобная инициализация: стартовый loss ≈ ln(V), а не десятки."""
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def _scale_residual_projections(self) -> None:
+        """Выходы остаточных веток масштабируются на 1/sqrt(2·L) (как в GPT-2)."""
+        scale = (2 * max(self.cfg.n_layers, 1)) ** -0.5
+        for block in self.blocks:
+            for proj in (block.memory.out, block.attention.out):
+                with torch.no_grad():
+                    proj.weight.mul_(scale)
+            for expert in list(block.moe.experts) + list(block.moe.shared):
+                with torch.no_grad():
+                    expert.w_down.weight.mul_(scale)
 
     # ------------------------------------------------------- регистрация мод.
     def register_encoder(self, name: str, encoder: nn.Module) -> None:

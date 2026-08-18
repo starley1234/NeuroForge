@@ -2,7 +2,8 @@
 
 Поддерживается: переменные и арифметика, cube/sphere/cylinder,
 translate/rotate/scale/mirror-как-scale, union/difference/intersection,
-блоки {...}, комментарии, $fn/$fa/$fs (игнорируются), for-циклы с диапазоном.
+блоки {...}, комментарии, $fn/$fa/$fs (игнорируются),
+for-циклы вида `for (i = [0:5])`, `for (i = [0:2:10])`, `for (v = [1,3,7])`.
 Этого достаточно для параметрических деталей data-flywheel.
 """
 from __future__ import annotations
@@ -230,6 +231,9 @@ class ScadParser:
             self.accept(";")
             return None
 
+        if t.value == "for":
+            return self.for_loop()
+
         name = self.next().value
         if name.startswith("$"):                # $fn=... уже обработан выше
             self.accept(";")
@@ -242,6 +246,52 @@ class ScadParser:
 
         child = self.block_or_statement()
         return self._wrap(name, args, kw, child)
+
+    def for_loop(self) -> Optional[Node]:
+        """`for (i = [a:b])`, `for (i = [a:step:b])`, `for (v = [x, y, z])`."""
+        self.expect("for")
+        self.expect("(")
+        var = self.next().value
+        self.expect("=")
+        self.expect("[")
+        first = self.expr()
+        values: List[float] = []
+        if self.accept(":"):
+            second = self.expr()
+            if self.accept(":"):
+                third = self.expr()
+                start, step, end = first, second, third
+            else:
+                start, step, end = first, 1.0, second
+            self.expect("]")
+            if step and ((end - start) / step) >= 0:
+                n = int(abs((end - start) / step)) + 1
+                values = [start + i * step for i in range(min(n, 4096))]
+        else:
+            values = [first]
+            while self.accept(","):
+                values.append(self.expr())
+            self.expect("]")
+        self.expect(")")
+
+        body_start = self.i
+        nodes: List[Node] = []
+        saved = self.vars.get(var)
+        for value in values:
+            self.i = body_start
+            self.vars[var] = value
+            node = self.block_or_statement()
+            if node is not None:
+                nodes.append(node)
+        if saved is None:
+            self.vars.pop(var, None)
+        else:
+            self.vars[var] = saved
+        if not values:                       # пустой диапазон: пропустить тело
+            self.block_or_statement()
+        if not nodes:
+            return None
+        return nodes[0] if len(nodes) == 1 else union(*nodes)
 
     # ---------------------------------------------------------------- фабрики
     def _make(self, name: str, args: List[Any], kw: Dict[str, Any]) -> Optional[Node]:

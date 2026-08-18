@@ -1,5 +1,21 @@
 # Обучение
 
+Быстрый путь — `nexus quickstart --scale small`: он сам построит данные,
+обучит токенизатор и ядро, прогонит приёмку и назначит `production`.
+Ниже — ручной режим по шагам.
+
+## 0. Токенизатор
+
+```bash
+nexus train-tokenizer --source dir:./corpus --vocab-size 8192 \
+                      --out artifacts/tokenizer/bpe.json
+nexus train-lm --source dir:./corpus --tokenizer artifacts/tokenizer/bpe.json
+```
+
+Байтовый BPE обучается на своём корпусе, обратим (`decode(encode(x)) == x`) и
+сохраняется в каталоге версии модели, поэтому пара «веса ↔ токенизатор» не
+может разъехаться.
+
 Три сценария, один и тот же тренер (`nexus/training/trainer.py`), один и тот же
 реестр версий.
 

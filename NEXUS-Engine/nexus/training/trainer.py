@@ -47,6 +47,7 @@ class TrainConfig:
     stage: str = "train"
     dataset: str = ""
     notes: str = ""
+    tokenizer_path: Optional[str] = None
     registry_root: Optional[str] = None
 
     def to_dict(self) -> Dict[str, object]:
@@ -137,13 +138,14 @@ class Trainer:
                     opt.zero_grad(set_to_none=True)
 
                 if step % cfg.log_every == 0:
-                    msg = " ".join(f"{k}={float(v):.4f}" for k, v in stats.items()
+                    msg = " ".join(f"{k}={float(v.detach()):.4f}" for k, v in stats.items()
                                    if isinstance(v, torch.Tensor))
                     print(f"[{cfg.stage}] step {step:5d}/{total} {msg} "
                           f"lr={opt.param_groups[0]['lr']:.2e} ({time.time() - t0:.1f}s)",
                           flush=True)
-                self.history.append({"step": step, **{k: float(v) for k, v in stats.items()
-                                                      if isinstance(v, torch.Tensor)}})
+                self.history.append({"step": step,
+                                     **{k: float(v.detach()) for k, v in stats.items()
+                                        if isinstance(v, torch.Tensor)}})
                 step += 1
 
                 if cfg.eval_every and step % cfg.eval_every == 0 and self.val_ds is not None:
@@ -194,6 +196,7 @@ class Trainer:
             self.cfg.model_name, self.model.state_dict(), self.model.cfg.to_dict(),
             kind="core", metrics=metrics or {}, parent=parent,
             dataset=self.cfg.dataset, stage=self.cfg.stage, notes=self.cfg.notes,
+            tokenizer_path=self.cfg.tokenizer_path,
             extra={"train_config": self.cfg.to_dict()},
         )
         print(f"[registry] сохранено {mv.tag} → {mv.path}")

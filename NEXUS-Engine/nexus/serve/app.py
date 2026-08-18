@@ -17,7 +17,15 @@
 `POST /v1/jobs`                      запустить обучение фоновой задачей
 `GET  /v1/jobs`, `/v1/jobs/{id}`     список задач и лог конкретной задачи
 `POST /v1/jobs/{id}/cancel`          остановить задачу
+`POST /v1/generate/stream`           потоковая генерация (SSE)
+`POST /v1/generate/batch`            батч-генерация по списку промптов
+`GET  /metrics`                      метрики в формате Prometheus
 ===================================  =========================================
+
+Защита: если задана переменная окружения ``NEXUS_API_KEY``, все запросы, кроме
+``/health`` и ``/``, требуют заголовок ``Authorization: Bearer <key>``
+(или ``X-API-Key``). Плюс простой rate-limit по IP (по умолчанию 120 запросов
+в минуту, меняется флагом ``--rate-limit``).
 """
 from __future__ import annotations
 
@@ -32,6 +40,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from ..registry import ModelRegistry
 from .jobs import JobManager
 from .service import InferenceService
+
+API_KEY_ENV = "NEXUS_API_KEY"
 
 INDEX_HTML = """<!doctype html><html lang="ru"><meta charset="utf-8">
 <title>NEXUS-Engine API</title>
@@ -90,6 +100,7 @@ class NexusAPI:
             ("POST", "/v1/eval"): lambda b, p: self._eval(b),
             ("POST", "/v1/jobs"): lambda b, p: self.jobs.submit(b.get("args", [])).to_dict(),
             ("GET", "/v1/jobs"): lambda b, p: {"jobs": self.jobs.list()},
+            ("POST", "/v1/generate/batch"): lambda b, p: self.service.generate_batch(**b),
         }
         self.patterns = [
             ("GET", re.compile(r"^/v1/jobs/(?P<job_id>[a-f0-9]+)$"), self._job_status),
@@ -147,7 +158,31 @@ class NexusAPI:
         return 404, {"error": f"нет маршрута {method} {path}"}
 
 
-def make_handler(api: NexusAPI):
+class RateLimiter:
+    """Скользящее окно на 60 с по IP-адресу."""
+
+    def __init__(self, limit_per_minute: int = 120):
+        self.limit = limit_per_minute
+        self.hits: Dict[str, list] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, client: str) -> bool:
+        if self.limit <= 0:
+            return True
+        import time
+        now = time.time()
+        with self._lock:
+            bucket = [t for t in self.hits.get(client, []) if now - t < 60.0]
+            if len(bucket) >= self.limit:
+                self.hits[client] = bucket
+                return False
+            bucket.append(now)
+            self.hits[client] = bucket
+            return True
+
+
+def make_handler(api: NexusAPI, api_key: Optional[str] = None,
+                 limiter: Optional[RateLimiter] = None):
     class Handler(BaseHTTPRequestHandler):
         server_version = "NEXUS/0.1"
         protocol_version = "HTTP/1.1"
@@ -172,21 +207,65 @@ def make_handler(api: NexusAPI):
         def do_OPTIONS(self):  # noqa: N802
             self._send(204, {})
 
+        # ---------------------------------------------------------- защита
+        def _authorized(self, path: str) -> bool:
+            if not api_key or path in ("/", "/index.html", "/health"):
+                return True
+            header = self.headers.get("Authorization", "")
+            token = header[7:] if header.startswith("Bearer ") else self.headers.get("X-API-Key", "")
+            return token == api_key
+
+        def _rate_ok(self) -> bool:
+            return limiter.allow(self.client_address[0]) if limiter else True
+
         def do_GET(self):  # noqa: N802
             path = self.path.split("?")[0]
             if path in ("/", "/index.html"):
                 port = self.server.server_address[1]
                 return self._send(200, INDEX_HTML.replace("PORT", str(port)), "text/html")
+            if not self._authorized(path):
+                return self._send(401, {"error": "нужен Authorization: Bearer <NEXUS_API_KEY>"})
+            if not self._rate_ok():
+                return self._send(429, {"error": "превышен лимит запросов"})
+            if path == "/metrics":
+                return self._send(200, api.service.metrics(), "text/plain")
             self._handle("GET", path, {})
 
         def do_POST(self):  # noqa: N802
+            path = self.path.split("?")[0]
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8") if length else ""
+            if not self._authorized(path):
+                return self._send(401, {"error": "нужен Authorization: Bearer <NEXUS_API_KEY>"})
+            if not self._rate_ok():
+                return self._send(429, {"error": "превышен лимит запросов"})
             try:
                 body = json.loads(raw) if raw else {}
             except json.JSONDecodeError as exc:
                 return self._send(400, {"error": f"некорректный JSON: {exc}"})
-            self._handle("POST", self.path.split("?")[0], body)
+            if path == "/v1/generate/stream":
+                return self._stream(body)
+            self._handle("POST", path, body)
+
+        def _stream(self, body: Dict[str, Any]) -> None:
+            """Server-Sent Events: токены отдаются по мере генерации."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                for chunk in api.service.generate_stream(**body):
+                    payload = json.dumps(chunk, ensure_ascii=False)
+                    self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            except Exception as exc:  # pragma: no cover
+                err = json.dumps({"error": str(exc)}, ensure_ascii=False)
+                self.wfile.write(f"data: {err}\n\n".encode("utf-8"))
+            self.close_connection = True
 
         def _handle(self, method: str, path: str, body: Dict[str, Any]) -> None:
             try:
@@ -206,17 +285,26 @@ def make_handler(api: NexusAPI):
 def create_server(host: str = "0.0.0.0", port: int = 8000,
                   registry_root: str = "artifacts/registry",
                   model: str = "core", ref: str = "production",
-                  device: str = "cpu", preset: str = "tiny"):
-    service = InferenceService(registry_root, model, ref, device, preset)
+                  device: str = "cpu", preset: str = "tiny",
+                  api_key: Optional[str] = None, rate_limit: int = 120,
+                  tokenizer: Optional[str] = None, compile_model: bool = False):
+    import os
+    service = InferenceService(registry_root, model, ref, device, preset,
+                               tokenizer_path=tokenizer, compile_model=compile_model)
     api = NexusAPI(service)
-    server = ThreadingHTTPServer((host, port), make_handler(api))
+    key = api_key or os.environ.get(API_KEY_ENV) or None
+    handler = make_handler(api, key, RateLimiter(rate_limit))
+    server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server, api
 
 
 def serve(host: str = "0.0.0.0", port: int = 8000, **kwargs) -> None:
+    import os
     server, _ = create_server(host, port, **kwargs)
-    print(f"[api] NEXUS-Engine слушает http://{host}:{port} (Ctrl+C — стоп)", flush=True)
+    protected = bool(kwargs.get("api_key") or os.environ.get(API_KEY_ENV))
+    print(f"[api] NEXUS-Engine слушает http://{host}:{port} "
+          f"({'с ключом' if protected else 'без авторизации'}; Ctrl+C — стоп)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -234,9 +322,14 @@ def main() -> None:
     ap.add_argument("--ref", default="production")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    ap.add_argument("--api-key", default=None)
+    ap.add_argument("--rate-limit", type=int, default=120)
+    ap.add_argument("--tokenizer", default=None)
+    ap.add_argument("--compile", action="store_true")
     a = ap.parse_args()
     serve(a.host, a.port, registry_root=a.registry, model=a.model, ref=a.ref,
-          device=a.device, preset=a.preset)
+          device=a.device, preset=a.preset, api_key=a.api_key,
+          rate_limit=a.rate_limit, tokenizer=a.tokenizer, compile_model=a.compile)
 
 
 if __name__ == "__main__":
