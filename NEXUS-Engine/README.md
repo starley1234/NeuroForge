@@ -34,7 +34,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 36 тестов, ~5 с на CPU
+pytest -q                        # 65 тестов, ~30 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -59,6 +59,11 @@ python -m nexus.cli demo         # сквозная демонстрация в�
 
 ```bash
 nexus info --preset rtx5060 --build      # конфиг, число параметров, бюджет VRAM, доступные бэкенды
+nexus train-lm --source dir:./corpus     # обучение на стандартном датасете
+nexus distill --teacher Qwen/Qwen2.5-0.5B --mode logit   # дистилляция из LLM
+nexus eval --ref latest --baseline production --gate     # приёмочные тесты + промоушен
+nexus registry list | history | promote | rollback | prune
+nexus serve --host 0.0.0.0 --port 8000   # HTTP API: инференс + обучение фоном
 nexus analyze examples/scad/flange.scad --force 0 0 -600 --material alu6061 --stl out.stl
 nexus reward examples/scad/thin_plate_bad.scad          # физическая награда как в RL
 nexus flywheel -n 256 --out artifacts/flywheel          # датасет { ТЗ → SCAD → 3D → FEM }
@@ -73,9 +78,82 @@ nexus vram --preset rtx5060                             # бюджет VRAM
 
 ---
 
-## 3. Архитектура
+## 3. Эксплуатация: обучение, версии, API
 
-### 3.1 Уровень 1 — непрерывные динамические энкодеры
+Полные инструкции — [docs/training.md](docs/training.md),
+[docs/operations.md](docs/operations.md), [docs/api.md](docs/api.md).
+
+### 3.1 Обучение на стандартном датасете
+
+```bash
+nexus train-lm --source builtin:engineering            # офлайн-корпус, работает сразу
+nexus train-lm --source dir:./corpus --seq-len 1024 --grad-accum 16 --device cuda --amp
+nexus train-lm --source hf:wikitext/wikitext-2-raw-v1:train --limit 20000
+nexus train-lm --source flywheel:artifacts/flywheel --resume latest    # дообучение
+```
+
+Источники: `builtin:` · `dir:` · `file:` · `jsonl:PATH#field` · `flywheel:` ·
+`hf:NAME[/CONFIG][:SPLIT]#field`. Общий тренер: grad-accum, косинусный LR с
+прогревом, AMP, 8-bit AdamW, ранняя остановка, автосохранение версии.
+
+### 3.2 Дистилляция из существующей LLM
+
+```bash
+nexus distill --teacher Qwen/Qwen2.5-0.5B --mode logit     # KL по логитам + CE
+nexus distill --teacher Qwen/Qwen2.5-0.5B --mode cached --top-k 64   # логиты на диск
+nexus distill --teacher Qwen/Qwen2.5-0.5B --mode sequence  # чёрный ящик: корпус от учителя
+nexus distill --teacher-nexus core --teacher-ref production --mode logit  # самодистилляция
+```
+
+Потери `alpha·KL(student‖teacher)·T² + (1−alpha)·CE`; в режиме `logit` студент
+автоматически переводится на словарь учителя. Учитель может быть любым классом
+с `logits()` и `generate_text()`.
+
+### 3.3 Реестр версий — ничего не теряется
+
+```
+artifacts/registry/core/
+  v0001/{model.pt, meta.json}   v0002/…   v0003/…
+  tags.json  {"latest": 3, "production": 2}
+  tags.log   журнал переключений тегов
+```
+
+* новая версия — **новый каталог**, перезапись запрещена на уровне API;
+* запись атомарна (tmp → `os.replace`), в `meta.json` пишутся конфиг, метрики,
+  родительская версия, датасет, стадия, git-коммит и sha256;
+* `load()` сверяет sha256; `prune` не трогает версии под тегами;
+* откат — переключение тега: `nexus registry rollback --tag production`.
+
+### 3.4 Автотесты дообученной модели (quality gate)
+
+```bash
+nexus eval --model-name core --ref latest --baseline production \
+           --max-ppl 40 --min-compile 0.3 --max-regression 1.05 --gate
+```
+
+Проверки: конечность логитов, перплексия, вырожденность генерации, детерминизм
+greedy, латентность, постоянство размера TTT-состояния, доля компилируемых
+SCAD-генераций, регрессия к базовой версии. Тег `production` переключается
+**только** при полном прохождении; код возврата пригоден для CI.
+
+### 3.5 HTTP API
+
+```bash
+nexus serve --host 0.0.0.0 --port 8000 --ref production
+curl -s -X POST localhost:8000/v1/design -d '{"spec":"<task>кронштейн 350 Н","material":"alu6061"}'
+curl -s -X POST localhost:8000/v1/jobs   -d '{"args":["train-lm","--epochs","1"]}'
+```
+
+Без внешних веб-зависимостей (стандартная библиотека). `GET /` — мини-панель.
+Эндпойнты: `/health`, `/v1/models`, `/v1/generate`, `/v1/design`, `/v1/analyze`,
+`/v1/reward`, `/v1/reload`, `/v1/registry/promote|rollback`, `/v1/eval`,
+`/v1/jobs`. Обучение запускается фоновой задачей, инференс при этом не встаёт.
+
+---
+
+## 4. Архитектура
+
+### 4.1 Уровень 1 — непрерывные динамические энкодеры
 
 | Класс данных | Энкодер | Модуль |
 | :-- | :-- | :-- |
@@ -87,7 +165,7 @@ nexus vram --preset rtx5060                             # бюджет VRAM
 
 Все энкодеры выдают `LatentPacket` — латенты плюс **физические инварианты**: координаты в метрах, время в секундах, масса, вектор силы.
 
-### 3.2 Уровень 2 — физическое инвариантное ядро
+### 4.2 Уровень 2 — физическое инвариантное ядро
 
 **Unified Latent Bus** (`bus.py`) сливает пакеты в единый поток, упорядоченный по физическому времени, и добавляет инварианты к каждому токену.
 
@@ -105,13 +183,13 @@ nexus vram --preset rtx5060                             # бюджет VRAM
 
 **Latent Reasoning Workspace** (`reasoning/workspace.py`): скрытое состояние циркулирует $k$ раз без генерации токенов; на каждом шаге можно дёрнуть **FNO-суррогат** (`surrogates/fno.py`) и получить мгновенную оценку прочности/аэродинамики; Adaptive Pondering останавливает цикл по накопленной вероятности остановки.
 
-### 3.3 Уровень 3 — двухрежимный вывод
+### 4.3 Уровень 3 — двухрежимный вывод
 
 `heads.py`: дискретная голова (OpenSCAD, текст, Python/C++) и непрерывная (траектории/G-код `action_dim`, тензорное поле $G^3$, скаляры «масса / $\sigma_{max}$ / запас прочности»).
 
 ---
 
-## 4. OpenSCAD Data Flywheel
+## 5. OpenSCAD Data Flywheel
 
 ```
 Базовые скрипты (examples/scad) → Domain Randomization (5 шаблонов, 6–8 параметров каждый)
@@ -134,7 +212,7 @@ nexus flywheel -n 512 --out artifacts/flywheel --grid 24 --fem-grid 16
 
 ---
 
-## 5. Бюджет VRAM для RTX 5060 (16 ГБ)
+## 6. Бюджет VRAM для RTX 5060 (16 ГБ)
 
 `nexus vram --preset rtx5060` (BF16, 8-bit оптимизатор, 50 % экспертов на CPU-offload, $L=128$, batch 2):
 
@@ -154,7 +232,7 @@ nexus flywheel -n 512 --out artifacts/flywheel --grid 24 --fem-grid 16
 
 ---
 
-## 6. План разработки и текущий статус
+## 7. План разработки и текущий статус
 
 | Фаза | Содержание | Статус |
 | :-- | :-- | :-- |
@@ -172,7 +250,7 @@ model.register_encoder("audio", AudioSSMEncoder(model.cfg.d_latent))   # учи�
 
 ---
 
-## 7. Структура репозитория
+## 8. Структура репозитория
 
 ```
 nexus/
@@ -190,20 +268,41 @@ nexus/
   scad/                     parser.py · generator.py · render.py
   fem/                      solver.py (load-path) · calculix.py (адаптер ccx)
   data/                     tokenizer.py · flywheel.py · dataset.py
-  training/                 pretrain.py · train_fno.py · grpo.py · rewards.py
-  eval/                     needle.py (O(1) память) · vram.py (бюджет)
-tests/                      36 тестов: геометрия, ядро, пайплайн
+  registry.py               версии моделей, теги, откат, sha256
+  training/                 trainer.py (общий цикл) · train_lm.py · distill.py
+                            pretrain.py · train_fno.py · grpo.py · rewards.py
+  serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
+  eval/                     suite.py (quality gate) · needle.py · vram.py
+tests/                      65 тестов: геометрия, ядро, пайплайн, реестр, обучение, API
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       architecture.md · vram_budget.md · roadmap.md
+docs/                       architecture.md · training.md · api.md · operations.md
+                            vram_budget.md · roadmap.md
 ```
 
 ---
 
-## 8. Ограничения (честно)
+## 9. Ограничения и чего не хватает
 
 * Веса не обучены: репозиторий даёт **архитектуру, данные и контур обучения**, а не готовую модель. На случайной инициализации GRPO ожидаемо получает награду −1 (сгенерированный текст не компилируется) — сначала фаза 3 на реальном объёме данных, затем RL.
 * Встроенный FEM — физически мотивированный суррогат, а не полноценный МКЭ; для сертификационных расчётов подключайте CalculiX.
 * Парсер OpenSCAD покрывает подмножество языка (примитивы, булевы операции, трансформации, переменные, арифметика); `hull`/`minkowski` аппроксимируются содержимым.
 * Энкодеры аудио/видео/3DGS/DVS/биометрии реализованы как рабочие модули уровня 1 с корректной непрерывной динамикой, но обучающих корпусов для них в репозитории нет.
+
+### Чего не хватает для комфортной эксплуатации
+
+Приоритет сверху вниз — так и стоит закрывать.
+
+| # | Чего нет | Почему это важно | Оценка |
+| :-- | :-- | :-- | :-- |
+| 1 | **Обученных весов и большого корпуса** | всё остальное готово, но модель пока «пустая»; нужен сбор 10–100 ГБ кода/CAD/документации и прогон фазы 3 на GPU | недели GPU-времени |
+| 2 | **Токенизатор, обученный на корпусе** | сейчас байтовый BPE с ручными мёржами: последовательности длиннее в 2–3 раза, чем могли бы быть | 1–2 дня |
+| 3 | **Аутентификация и лимиты в API** | сервис рассчитан на закрытый контур: нет токенов, квот, rate-limit, TLS | 1–2 дня |
+| 4 | **Ускоренные ядра TTT/MoE** | сейчас чистый PyTorch; Triton/CUDA-ядра для чанкового скана и группировки экспертов дадут 3–10× | 1–2 недели |
+| 5 | **Настоящий МКЭ вместо суррогата** | load-path решатель хорош для наград, но не для сертификации; нужен CalculiX в контуре или собственный решатель на гексаэдрах | 1–2 недели |
+| 6 | **Батч-инференс и потоковая генерация (SSE)** | сейчас запросы обрабатываются по одному, ответ отдаётся целиком | 2–4 дня |
+| 7 | **Контейнеризация и CI** | Dockerfile, GitHub Actions с прогоном тестов и gate-проверкой, публикация артефактов | 1–2 дня |
+| 8 | **Метрики Prometheus/Grafana** | сейчас только `/health` и логи; нет гистограмм латентности и алертов | 1–2 дня |
+| 9 | **Marching cubes и STEP/IGES** | воксельный STL груб для реального производства; нужен OpenCascade для B-Rep импорта/экспорта | 1 неделя |
+| 10 | **Датасеты для остальных модальностей** | энкодеры аудио/видео/3DGS/DVS/биометрии работают, но учить их не на чем | зависит от домена |
 
 Лицензия: MIT.

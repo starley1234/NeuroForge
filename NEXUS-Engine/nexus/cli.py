@@ -122,6 +122,85 @@ def _cmd_demo(args) -> int:
     return 0
 
 
+def _cmd_train_lm(args) -> int:
+    from .training.train_lm import train
+    out = train(args.source, args.model_name, args.preset, args.resume, args.seq_len,
+                args.limit, registry_root=args.registry, promote=args.promote,
+                epochs=args.epochs, batch_size=args.batch_size, grad_accum=args.grad_accum,
+                lr=args.lr, max_steps=args.max_steps, eval_every=args.eval_every,
+                patience=args.patience, device=args.device, amp=args.amp,
+                eight_bit=args.eight_bit)
+    print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
+    return 0
+
+
+def _cmd_distill(args) -> int:
+    from .training.distill import DistillConfig, HFTeacher, NexusTeacher, distill
+    teacher = None
+    tokenizer = None
+    if args.teacher:
+        t = HFTeacher(args.teacher, device=args.device)
+        teacher, tokenizer = t, t.adapter
+    elif args.teacher_nexus:
+        teacher = NexusTeacher.from_registry(args.teacher_nexus, args.teacher_ref,
+                                             args.registry, args.device)
+    elif args.mode != "sequence":
+        print("нужен --teacher (HF) или --teacher-nexus (реестр)", file=sys.stderr)
+        return 2
+    out = distill(teacher, args.source, args.model_name, args.preset,
+                  DistillConfig(args.temperature, args.alpha, args.top_k, args.mode),
+                  resume=args.resume, seq_len=args.seq_len, cache_path=args.cache,
+                  registry_root=args.registry, tokenizer=tokenizer, promote=args.promote,
+                  epochs=args.epochs, batch_size=args.batch_size,
+                  grad_accum=args.grad_accum, lr=args.lr, max_steps=args.max_steps,
+                  device=args.device)
+    print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
+    return 0
+
+
+def _cmd_eval(args) -> int:
+    from .eval.suite import SuiteThresholds, evaluate_version
+    th = SuiteThresholds(max_val_ppl=args.max_ppl, min_scad_compile_rate=args.min_compile,
+                         max_ppl_regression=args.max_regression)
+    report = evaluate_version(args.model_name, args.ref, args.baseline, args.registry,
+                              args.source, args.seq_len, th, args.gate, device=args.device)
+    print(report.summary())
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump(report.to_dict(), fh, indent=2, ensure_ascii=False)
+    return 0 if report.passed else 1
+
+
+def _cmd_registry(args) -> int:
+    from .registry import ModelRegistry
+    reg = ModelRegistry(args.registry)
+    if args.action == "list":
+        print(json.dumps(reg.summary(), indent=2, ensure_ascii=False, default=str))
+    elif args.action == "show":
+        print(json.dumps(reg.get(args.model_name, args.ref).to_dict(), indent=2,
+                         ensure_ascii=False, default=str))
+    elif args.action == "history":
+        print(json.dumps([v.to_dict() for v in reg.history(args.model_name)], indent=2,
+                         ensure_ascii=False, default=str))
+    elif args.action == "promote":
+        print(json.dumps(reg.promote(args.model_name, args.ref, args.tag).to_dict(),
+                         indent=2, ensure_ascii=False, default=str))
+    elif args.action == "rollback":
+        print(json.dumps(reg.rollback(args.model_name, args.tag, args.steps).to_dict(),
+                         indent=2, ensure_ascii=False, default=str))
+    elif args.action == "prune":
+        removed = reg.prune(args.model_name, args.keep, dry_run=args.dry_run)
+        print(json.dumps({"removed": removed, "dry_run": args.dry_run}, ensure_ascii=False))
+    return 0
+
+
+def _cmd_serve(args) -> int:
+    from .serve.app import serve
+    serve(args.host, args.port, registry_root=args.registry, model=args.model_name,
+          ref=args.ref, device=args.device, preset=args.preset)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser("nexus", description="NEXUS-Engine CLI")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -205,6 +284,88 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--batch-size", type=int, default=2)
     p.add_argument("--chunk", type=int, default=128)
     p.set_defaults(fn=_cmd_vram)
+
+    p = sub.add_parser("train-lm", help="обучение на стандартном текстовом датасете")
+    p.add_argument("--source", default="builtin:engineering",
+                   help="builtin:engineering | dir:PATH | jsonl:PATH#text | hf:NAME:split | flywheel:PATH")
+    p.add_argument("--model-name", default="core")
+    p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    p.add_argument("--resume", default=None, help="версия/тег для дообучения")
+    p.add_argument("--seq-len", type=int, default=512)
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--batch-size", type=int, default=2)
+    p.add_argument("--grad-accum", type=int, default=8)
+    p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--max-steps", type=int, default=None)
+    p.add_argument("--eval-every", type=int, default=0)
+    p.add_argument("--patience", type=int, default=0)
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--amp", action="store_true")
+    p.add_argument("--eight-bit", action="store_true")
+    p.add_argument("--registry", default="artifacts/registry")
+    p.add_argument("--promote", action="store_true")
+    p.set_defaults(fn=_cmd_train_lm)
+
+    p = sub.add_parser("distill", help="дистилляция из существующей LLM")
+    p.add_argument("--teacher", default=None, help="HF-модель, напр. Qwen/Qwen2.5-0.5B")
+    p.add_argument("--teacher-nexus", default=None, help="учитель из реестра NEXUS")
+    p.add_argument("--teacher-ref", default="production")
+    p.add_argument("--mode", choices=["logit", "cached", "sequence"], default="logit")
+    p.add_argument("--source", default="builtin:engineering")
+    p.add_argument("--model-name", default="core-distill")
+    p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    p.add_argument("--resume", default=None)
+    p.add_argument("--temperature", type=float, default=2.0)
+    p.add_argument("--alpha", type=float, default=0.7)
+    p.add_argument("--top-k", type=int, default=64)
+    p.add_argument("--cache", default="artifacts/cache/teacher_topk.npz")
+    p.add_argument("--seq-len", type=int, default=256)
+    p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--batch-size", type=int, default=2)
+    p.add_argument("--grad-accum", type=int, default=8)
+    p.add_argument("--lr", type=float, default=2e-4)
+    p.add_argument("--max-steps", type=int, default=None)
+    p.add_argument("--device", default="cpu")
+    p.add_argument("--registry", default="artifacts/registry")
+    p.add_argument("--promote", action="store_true")
+    p.set_defaults(fn=_cmd_distill)
+
+    p = sub.add_parser("eval", help="приёмочные тесты версии модели (quality gate)")
+    p.add_argument("--model-name", default="core")
+    p.add_argument("--ref", default="latest")
+    p.add_argument("--baseline", default=None, help="версия/тег для сравнения")
+    p.add_argument("--source", default="builtin:engineering")
+    p.add_argument("--seq-len", type=int, default=128)
+    p.add_argument("--max-ppl", type=float, default=1e6)
+    p.add_argument("--min-compile", type=float, default=0.0)
+    p.add_argument("--max-regression", type=float, default=1.10)
+    p.add_argument("--gate", action="store_true", help="повысить до production при успехе")
+    p.add_argument("--json", default=None, help="сохранить отчёт в файл")
+    p.add_argument("--registry", default="artifacts/registry")
+    p.add_argument("--device", default="cpu")
+    p.set_defaults(fn=_cmd_eval)
+
+    p = sub.add_parser("registry", help="реестр моделей: версии, теги, откат")
+    p.add_argument("action", choices=["list", "show", "history", "promote", "rollback", "prune"])
+    p.add_argument("--model-name", default="core")
+    p.add_argument("--ref", default="latest")
+    p.add_argument("--tag", default="production")
+    p.add_argument("--steps", type=int, default=1)
+    p.add_argument("--keep", type=int, default=5)
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--registry", default="artifacts/registry")
+    p.set_defaults(fn=_cmd_registry)
+
+    p = sub.add_parser("serve", help="HTTP API (инференс + обучение фоном)")
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--model-name", default="core")
+    p.add_argument("--ref", default="production")
+    p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    p.add_argument("--registry", default="artifacts/registry")
+    p.add_argument("--device", default="cpu")
+    p.set_defaults(fn=_cmd_serve)
 
     p = sub.add_parser("demo", help="сквозная демонстрация всех трёх уровней")
     p.add_argument("--out", default="artifacts/demo")

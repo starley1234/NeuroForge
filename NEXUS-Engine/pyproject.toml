@@ -15,6 +15,9 @@ dependencies = ["torch>=2.1", "numpy>=1.24"]
 [project.optional-dependencies]
 dev = ["pytest>=7.4"]
 quant = ["bitsandbytes>=0.43"]
+distill = ["transformers>=4.40"]
+datasets = ["datasets>=2.18"]
+all = ["pytest>=7.4", "bitsandbytes>=0.43", "transformers>=4.40", "datasets>=2.18"]
 
 [project.scripts]
 nexus = "nexus.cli:main"

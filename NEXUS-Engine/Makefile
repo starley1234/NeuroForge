@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: help install test demo flywheel pretrain fno rl needle vram lint
+.PHONY: help install test demo flywheel pretrain fno rl train-lm distill eval serve registry needle vram
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/'
@@ -8,7 +8,7 @@ help:
 install:  ## поставить пакет в editable-режиме
 	$(PY) -m pip install -e ".[dev]"
 
-test:  ## юнит-тесты (CPU, < 10 с)
+test:  ## юнит-тесты (CPU, ~30 с)
 	$(PY) -m pytest -q
 
 demo:  ## сквозная демонстрация всех уровней
@@ -25,6 +25,21 @@ fno:  ## фаза 2: обучение FNO-суррогата FEM
 
 rl:  ## фаза 4: Physics-RL (GRPO)
 	$(PY) -m nexus.cli rl --steps 10
+
+train-lm:  ## обучение на стандартном датасете (встроенный корпус)
+	$(PY) -m nexus.cli train-lm --source builtin:engineering --epochs 2
+
+distill:  ## самодистилляция из последней версии в реестре
+	$(PY) -m nexus.cli distill --teacher-nexus core --teacher-ref latest --mode logit
+
+eval:  ## приёмочные тесты последней версии против production
+	$(PY) -m nexus.cli eval --model-name core --ref latest --baseline production
+
+serve:  ## HTTP API на 0.0.0.0:8000
+	$(PY) -m nexus.cli serve --host 0.0.0.0 --port 8000
+
+registry:  ## содержимое реестра моделей
+	$(PY) -m nexus.cli registry list
 
 needle:  ## тест O(1) памяти на длинном контексте
 	$(PY) -m nexus.cli needle --lengths 1024,8192,32768

@@ -11,9 +11,11 @@ from .config import (AttentionConfig, FNOConfig, MoEConfig, NexusConfig,
                      ReasoningConfig, TTTConfig)
 from .bus import LatentPacket, UnifiedLatentBus
 from .model import NexusEngine
+from .registry import ModelRegistry, ModelVersion
 
 __version__ = "0.1.0"
 __all__ = [
     "NexusEngine", "NexusConfig", "TTTConfig", "AttentionConfig", "MoEConfig",
     "ReasoningConfig", "FNOConfig", "LatentPacket", "UnifiedLatentBus",
+    "ModelRegistry", "ModelVersion",
 ]
