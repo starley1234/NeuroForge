@@ -31,8 +31,9 @@ def train(
     promote: bool = False,
     **train_kwargs,
 ) -> Dict[str, object]:
-    cfg = NexusConfig.tiny() if preset == "tiny" else (
-        NexusConfig.rtx5060_compact() if preset == "rtx5060-compact" else NexusConfig.rtx5060())
+    cfg = {"tiny": NexusConfig.tiny, "small": NexusConfig.small,
+           "rtx5060": NexusConfig.rtx5060,
+           "rtx5060-compact": NexusConfig.rtx5060_compact}[preset]()
 
     from ..data.bpe import load_tokenizer
     tokenizer = load_tokenizer(tokenizer_path)
@@ -61,7 +62,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Обучение NEXUS на стандартном датасете")
     ap.add_argument("--source", default="builtin:engineering")
     ap.add_argument("--model-name", default="core")
-    ap.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    ap.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"], default="tiny")
     ap.add_argument("--resume", default=None, help="версия/тег для продолжения (latest, v0003)")
     ap.add_argument("--seq-len", type=int, default=512)
     ap.add_argument("--tokenizer", default=None, help="путь к обученному BPE (bpe.json)")

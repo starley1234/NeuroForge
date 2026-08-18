@@ -154,9 +154,11 @@ def run_suite(
     same = bool(torch.equal(a, b))
     rep.add("determinism", same, same, comment="greedy повторяем")
 
-    # 5. O(1) память
+    # 5. O(1) память: обе длины должны быть заметно больше окна внимания,
+    # иначе растёт не TTT-состояние, а ещё не заполненный KV-кэш окна.
+    window = model.cfg.attention.window
     sizes = []
-    for length in (128, 512):
+    for length in (2 * window, 6 * window):
         states = None
         chunk = min(length, model.cfg.attention.window)
         processed = 0
@@ -169,7 +171,8 @@ def run_suite(
         sizes.append(model.state_bytes(states or []))
     o1 = sizes[0] == sizes[1]
     rep.metrics["state_bytes"] = float(sizes[0])
-    rep.add("memory_o1", sizes, o1, comment="состояние TTT не растёт с контекстом")
+    rep.add("memory_o1", sizes, o1,
+            comment=f"состояние не растёт с контекстом ({2 * window} → {6 * window} токенов)")
 
     # 6. инженерная проверка: компилируется ли сгенерированный SCAD
     compiled = 0

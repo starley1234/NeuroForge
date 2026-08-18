@@ -12,7 +12,8 @@ import torch
 
 def _preset(name: str):
     from .config import NexusConfig
-    return {"tiny": NexusConfig.tiny, "rtx5060": NexusConfig.rtx5060,
+    return {"tiny": NexusConfig.tiny, "small": NexusConfig.small,
+            "rtx5060": NexusConfig.rtx5060,
             "rtx5060-compact": NexusConfig.rtx5060_compact}[name]()
 
 
@@ -119,7 +120,10 @@ def _cmd_vram(args) -> int:
 def _cmd_quickstart(args) -> int:
     from .quickstart import run_quickstart
     res = run_quickstart(args.scale, args.model_name, args.workdir, args.device,
-                         skip_data=args.skip_data, serve_after=args.serve, port=args.port)
+                         skip_data=args.skip_data, serve_after=args.serve, port=args.port,
+                         samples=args.samples, steps=args.steps, vocab=args.vocab,
+                         seq_len=args.seq_len, preset=args.preset,
+                         math_samples=args.math)
     return 0 if res.ready else 1
 
 
@@ -352,7 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("info", help="конфигурация, параметры, бюджет VRAM, доступные бэкенды")
-    p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="rtx5060")
+    p.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"], default="rtx5060")
     p.add_argument("--build", action="store_true", help="собрать модель и посчитать параметры")
     p.set_defaults(fn=_cmd_info)
 
@@ -436,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source", default="builtin:engineering",
                    help="builtin:engineering | dir:PATH | jsonl:PATH#text | hf:NAME:split | flywheel:PATH")
     p.add_argument("--model-name", default="core")
-    p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    p.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"], default="tiny")
     p.add_argument("--resume", default=None, help="версия/тег для дообучения")
     p.add_argument("--seq-len", type=int, default=512)
     p.add_argument("--tokenizer", default=None, help="обученный BPE (artifacts/tokenizer/bpe.json)")
@@ -462,7 +466,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", choices=["logit", "cached", "sequence"], default="logit")
     p.add_argument("--source", default="builtin:engineering")
     p.add_argument("--model-name", default="core-distill")
-    p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    p.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"], default="tiny")
     p.add_argument("--resume", default=None)
     p.add_argument("--temperature", type=float, default=2.0)
     p.add_argument("--alpha", type=float, default=0.7)
@@ -510,7 +514,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--model-name", default="core")
     p.add_argument("--ref", default="production")
-    p.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    p.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"], default="tiny")
     p.add_argument("--registry", default="artifacts/registry")
     p.add_argument("--device", default="auto")
     p.add_argument("--api-key", default=None, help="или переменная окружения NEXUS_API_KEY")
@@ -520,9 +524,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=_cmd_serve)
 
     p = sub.add_parser("quickstart", help="всё за одну команду: данные → токенизатор → обучение → приёмка")
-    p.add_argument("--scale", choices=["nano", "small", "medium", "gpu"], default="small")
+    p.add_argument("--scale", choices=["nano", "small", "medium", "gpu", "gpu-large"],
+                   default="small")
     p.add_argument("--model-name", default="core")
     p.add_argument("--workdir", default="artifacts")
+    p.add_argument("--samples", type=int, default=None, help="деталей в маховике")
+    p.add_argument("--steps", type=int, default=None, help="шагов обучения")
+    p.add_argument("--vocab", type=int, default=None, help="размер словаря BPE")
+    p.add_argument("--seq-len", type=int, default=None)
+    p.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"],
+                   default=None, help="размер модели")
+    p.add_argument("--math", type=int, default=None, help="задач инженерной математики")
     p.add_argument("--device", default="auto")
     p.add_argument("--skip-data", action="store_true", help="использовать уже готовый датасет")
     p.add_argument("--serve", action="store_true", help="сразу поднять API после обучения")

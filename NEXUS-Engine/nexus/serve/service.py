@@ -56,7 +56,8 @@ class InferenceService:
 
     # ------------------------------------------------------------- загрузка
     def _preset_config(self) -> NexusConfig:
-        return {"tiny": NexusConfig.tiny, "rtx5060": NexusConfig.rtx5060,
+        return {"tiny": NexusConfig.tiny, "small": NexusConfig.small,
+                "rtx5060": NexusConfig.rtx5060,
                 "rtx5060-compact": NexusConfig.rtx5060_compact}[self.preset]()
 
     def get_model(self, name: Optional[str] = None, ref: Optional[str] = None) -> LoadedModel:

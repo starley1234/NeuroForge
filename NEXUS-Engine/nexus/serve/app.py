@@ -20,6 +20,8 @@
 `POST /v1/generate/stream`           потоковая генерация (SSE)
 `POST /v1/generate/batch`            батч-генерация по списку промптов
 `GET  /metrics`                      метрики в формате Prometheus
+`GET  /docs`, `/redoc`               интерактивная документация (OpenAPI 3.1)
+`GET  /openapi.json`                 машинная спецификация API
 ===================================  =========================================
 
 Защита: если задана переменная окружения ``NEXUS_API_KEY``, все запросы, кроме
@@ -39,6 +41,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from ..registry import ModelRegistry
 from .jobs import JobManager
+from .openapi import REDOC_HTML, SWAGGER_HTML, build_spec
 from .service import InferenceService
 
 API_KEY_ENV = "NEXUS_API_KEY"
@@ -59,6 +62,8 @@ INDEX_HTML = """<!doctype html><html lang="ru"><meta charset="utf-8">
 <div class="sub">UniPhysical-Latent Framework — инференс, инженерный анализ, обучение</div>
 <div id="status"></div>
 <table><tr><th>Метод</th><th>Путь</th><th>Назначение</th></tr>
+<tr><td class="m">GET</td><td><code><a href="/docs">/docs</a></code></td><td>Swagger UI: можно дёргать методы прямо из браузера</td></tr>
+<tr><td class="m">GET</td><td><code><a href="/openapi.json">/openapi.json</a></code></td><td>спецификация OpenAPI 3.1</td></tr>
 <tr><td class="m">GET</td><td><code>/health</code></td><td>статус сервиса</td></tr>
 <tr><td class="m">GET</td><td><code>/v1/models</code></td><td>реестр моделей: версии, теги, метрики</td></tr>
 <tr><td class="m">POST</td><td><code>/v1/generate</code></td><td>{"prompt","max_new_tokens","temperature"}</td></tr>
@@ -209,7 +214,8 @@ def make_handler(api: NexusAPI, api_key: Optional[str] = None,
 
         # ---------------------------------------------------------- защита
         def _authorized(self, path: str) -> bool:
-            if not api_key or path in ("/", "/index.html", "/health"):
+            if not api_key or path in ("/", "/index.html", "/health", "/docs", "/docs/",
+                                       "/redoc", "/redoc/", "/openapi.json", "/favicon.ico"):
                 return True
             header = self.headers.get("Authorization", "")
             token = header[7:] if header.startswith("Bearer ") else self.headers.get("X-API-Key", "")
@@ -220,6 +226,8 @@ def make_handler(api: NexusAPI, api_key: Optional[str] = None,
 
         def do_GET(self):  # noqa: N802
             path = self.path.split("?")[0]
+            if path == "/favicon.ico":
+                return self._send(204, {})
             if path in ("/", "/index.html"):
                 port = self.server.server_address[1]
                 return self._send(200, INDEX_HTML.replace("PORT", str(port)), "text/html")
@@ -229,6 +237,13 @@ def make_handler(api: NexusAPI, api_key: Optional[str] = None,
                 return self._send(429, {"error": "превышен лимит запросов"})
             if path == "/metrics":
                 return self._send(200, api.service.metrics(), "text/plain")
+            if path in ("/docs", "/docs/"):
+                return self._send(200, SWAGGER_HTML, "text/html")
+            if path in ("/redoc", "/redoc/"):
+                return self._send(200, REDOC_HTML, "text/html")
+            if path == "/openapi.json":
+                port = self.server.server_address[1]
+                return self._send(200, build_spec(port))
             self._handle("GET", path, {})
 
         def do_POST(self):  # noqa: N802
@@ -303,8 +318,11 @@ def serve(host: str = "0.0.0.0", port: int = 8000, **kwargs) -> None:
     import os
     server, _ = create_server(host, port, **kwargs)
     protected = bool(kwargs.get("api_key") or os.environ.get(API_KEY_ENV))
+    shown = "localhost" if host in ("0.0.0.0", "::") else host
     print(f"[api] NEXUS-Engine слушает http://{host}:{port} "
           f"({'с ключом' if protected else 'без авторизации'}; Ctrl+C — стоп)", flush=True)
+    print(f"[api] документация: http://{shown}:{port}/docs   "
+          f"спецификация: http://{shown}:{port}/openapi.json", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -321,7 +339,7 @@ def main() -> None:
     ap.add_argument("--model", default="core")
     ap.add_argument("--ref", default="production")
     ap.add_argument("--device", default="cpu")
-    ap.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    ap.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"], default="tiny")
     ap.add_argument("--api-key", default=None)
     ap.add_argument("--rate-limit", type=int, default=120)
     ap.add_argument("--tokenizer", default=None)

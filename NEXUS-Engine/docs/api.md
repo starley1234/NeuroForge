@@ -7,6 +7,10 @@ nexus serve --host 0.0.0.0 --port 8000 --model-name core --ref production
 Только стандартная библиотека Python, без FastAPI/uvicorn. Открытый `GET /`
 отдаёт мини-панель со списком эндпойнтов и живым статусом.
 
+Интерактивная документация: **http://localhost:8000/docs** (Swagger UI, можно
+дёргать методы прямо из браузера), спецификация — `/openapi.json`, ReDoc — `/redoc`.
+Эти три адреса доступны без API-ключа.
+
 ## Эндпойнты
 
 | Метод | Путь | Тело / результат |
@@ -24,6 +28,7 @@ nexus serve --host 0.0.0.0 --port 8000 --model-name core --ref production
 | POST | `/v1/generate/stream` | SSE: токены по мере генерации |
 | POST | `/v1/generate/batch` | `{prompts:[...]}` — один прогон на несколько запросов |
 | GET | `/metrics` | метрики в формате Prometheus |
+| GET | `/docs`, `/redoc`, `/openapi.json` | документация и спецификация OpenAPI 3.1 |
 | POST | `/v1/jobs` | `{args:["train-lm","--max-steps","100"]}` → фоновая задача |
 | GET | `/v1/jobs`, `/v1/jobs/{id}` | список задач, статус и хвост лога |
 | POST | `/v1/jobs/{id}/cancel` | остановить задачу |

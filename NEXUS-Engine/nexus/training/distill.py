@@ -237,8 +237,9 @@ def distill(
 ) -> Dict[str, object]:
     dcfg = dcfg or DistillConfig()
     device = train_kwargs.get("device", "cpu")
-    cfg = NexusConfig.tiny() if preset == "tiny" else (
-        NexusConfig.rtx5060_compact() if preset == "rtx5060-compact" else NexusConfig.rtx5060())
+    cfg = {"tiny": NexusConfig.tiny, "small": NexusConfig.small,
+           "rtx5060": NexusConfig.rtx5060,
+           "rtx5060-compact": NexusConfig.rtx5060_compact}[preset]()
 
     if dcfg.mode == "cached" and cache_path and os.path.exists(cache_path):
         ds: Dataset = CachedLogitsDataset(cache_path)
@@ -296,7 +297,7 @@ def main() -> None:
     ap.add_argument("--mode", choices=["logit", "cached", "sequence"], default="logit")
     ap.add_argument("--source", default="builtin:engineering")
     ap.add_argument("--model-name", default="core-distill")
-    ap.add_argument("--preset", choices=["tiny", "rtx5060", "rtx5060-compact"], default="tiny")
+    ap.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"], default="tiny")
     ap.add_argument("--temperature", type=float, default=2.0)
     ap.add_argument("--alpha", type=float, default=0.7)
     ap.add_argument("--top-k", type=int, default=64)

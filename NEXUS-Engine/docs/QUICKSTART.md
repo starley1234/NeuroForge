@@ -74,12 +74,25 @@ python -m venv .venv
 
 Масштаб прогона: `NEXUS_SCALE=nano|small|medium|gpu ./nexus.sh quickstart`
 
-| Масштаб | Деталей | Шагов | Время (CPU) | Зачем |
-| :-- | --: | --: | :-- | :-- |
-| `nano` | 8 | 8 | ~8 с | проверить, что всё живо |
-| `small` | 48 | 60 | ~20 с | демо и разработка (по умолчанию) |
-| `medium` | 256 | 400 | ~10 мин | осмысленные метрики |
-| `gpu` | 2000 | 4000 | часы на RTX 5060 | реальное обучение |
+| Масштаб | Деталей | Математика | Модель | Шагов | Время |
+| :-- | --: | --: | :-- | --: | :-- |
+| `nano` | 8 | — | tiny (1M) | 8 | ~8 с CPU — проверить, что всё живо |
+| `small` | 48 | 200 | tiny (1M) | 60 | ~20 с CPU — демо пайплайна (по умолчанию) |
+| `medium` | 500 | 5 000 | small (200M) | 1 500 | минуты на GPU / ~час CPU |
+| `gpu` | 5 000 | 50 000 | small (200M) | 20 000 | часы на RTX 5060 Ti — **первая осмысленная модель** |
+| `gpu-large` | 20 000 | 200 000 | 1.4B активных | 60 000 | сутки на RTX 5060 Ti |
+
+Любой параметр переопределяется:
+
+```powershell
+.\nexus.ps1 cli quickstart --scale gpu --samples 8000 --steps 30000 --math 100000 `
+                           --vocab 16384 --seq-len 1024 --preset small --device cuda
+```
+
+`nano` и `small` — это **демо пайплайна**: 48 деталей и 60 шагов физически не могут
+научить модель языку, они лишь доказывают, что весь конвейер (данные → токенизатор →
+обучение → приёмка → реестр) работает. Осмысленный минимум — `--scale medium`,
+реальный — `--scale gpu`.
 
 Что делает `quickstart`: проверяет окружение → генерирует детали OpenSCAD и
 считает по ним FEM → обучает BPE-токенизатор → обучает ядро → прогоняет
@@ -122,6 +135,20 @@ $env:NEXUS_SCALE = "gpu"
 AMP включается автоматически при обучении на CUDA.
 
 ## 2. Проверка, что работает
+
+Проще всего — открыть в браузере **http://localhost:8000/docs**: Swagger UI со всеми
+методами, примерами тел запросов и кнопкой «Try it out». Машинная спецификация —
+`/openapi.json`, альтернативный вид — `/redoc`.
+
+> В PowerShell `curl` — это алиас `Invoke-WebRequest`, и одинарные кавычки ломают JSON.
+> Используйте `curl.exe` или встроенный командлет:
+> ```powershell
+> curl.exe -s localhost:8000/v1/analyze -H "Content-Type: application/json" `
+>   -d "{\"code\":\"cube([20,20,4],center=true);\",\"force\":[0,0,-300]}"
+> # либо
+> Invoke-RestMethod -Uri localhost:8000/v1/analyze -Method Post -ContentType application/json `
+>   -Body (@{ code = "cube([20,20,4],center=true);"; force = @(0,0,-300) } | ConvertTo-Json)
+> ```
 
 ```bash
 curl -s localhost:8000/health
@@ -176,7 +203,9 @@ docker compose up -d                       # поднять API на :8000
 | PowerShell: `Отсутствует закрывающий знак "}"` | старый `nexus.ps1` без BOM; сделайте `git pull` (файл теперь ASCII + BOM + CRLF) |
 | WSL: `env: $'bash\r'` | CRLF-окончания: `sed -i 's/\r$//' nexus.sh` после `git pull` |
 | Python 3.13+ и torch не ставится | возьмите Python 3.11/3.12 (`py -3.11 -m venv .venv`) |
-| Есть RTX, но `CUDA: False` | стоит CPU-сборка torch: `.\nexus.ps1 gpu` (RTX 50xx → cu128) |
+| Есть RTX, но `CUDA: False` | стоит CPU-сборка torch: `git pull`, затем `.\nexus.ps1 gpu` (RTX 50xx → cu128) |
+| PowerShell: `POST /v1/analyze → 400` | `curl` там алиас `Invoke-WebRequest`; используйте `curl.exe`, `Invoke-RestMethod` или `/docs` |
+| «Модель ничего не выучила» | масштаб `nano`/`small` — это демо; берите `--scale medium` или `gpu` |
 | `sm_120 is not compatible` | старое колесо CUDA: нужен cu128 и torch ≥ 2.7 |
 | torch ставится очень долго | это ~800 МБ; для GPU-сборки `NEXUS_GPU=1 ./nexus.sh setup` |
 | `quickstart` завершился с «ПРОВАЛЕНО» | норма для `nano`: слишком мало шагов; берите `small` и выше |

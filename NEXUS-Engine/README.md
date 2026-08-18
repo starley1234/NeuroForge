@@ -109,12 +109,16 @@ nexus vram --preset rtx5060                             # бюджет VRAM
 
 ### 3.1 Одна команда: `nexus quickstart`
 
-| Масштаб | Деталей | Шагов | Время (CPU) |
-| :-- | --: | --: | :-- |
-| `nano` | 8 | 8 | ~8 с |
-| `small` | 48 | 60 | ~20 с |
-| `medium` | 256 | 400 | ~10 мин |
-| `gpu` | 2000 | 4000 | часы на RTX 5060 |
+| Масштаб | Деталей | Математика | Модель | Шагов | Время |
+| :-- | --: | --: | :-- | --: | :-- |
+| `nano` | 8 | — | tiny 1M | 8 | ~8 с CPU |
+| `small` | 48 | 200 | tiny 1M | 60 | ~20 с CPU (демо пайплайна) |
+| `medium` | 500 | 5 000 | small 200M | 1 500 | минуты на GPU |
+| `gpu` | 5 000 | 50 000 | small 200M | 20 000 | часы на RTX 5060 Ti |
+| `gpu-large` | 20 000 | 200 000 | 1.4B активных | 60 000 | сутки на RTX 5060 Ti |
+
+Любой параметр переопределяется: `--samples`, `--steps`, `--math`, `--vocab`,
+`--seq-len`, `--preset`, `--device`.
 
 Проверяет окружение → строит датасет SCAD→3D→FEM → обучает BPE-токенизатор →
 обучает ядро → прогоняет приёмочные тесты → при успехе помечает версию
@@ -214,11 +218,14 @@ curl -s -X POST localhost:8000/v1/design -d '{"spec":"<task>кронштейн 3
 curl -s -X POST localhost:8000/v1/jobs   -d '{"args":["train-lm","--epochs","1"]}'
 ```
 
-Без внешних веб-зависимостей (стандартная библиотека). `GET /` — мини-панель.
+Без внешних веб-зависимостей (стандартная библиотека). `GET /docs` — Swagger UI
+с кнопкой «Try it out», `GET /openapi.json` — спецификация OpenAPI 3.1,
+`GET /redoc` — альтернативный вид, `GET /` — мини-панель.
 Эндпойнты: `/health`, `/metrics` (Prometheus), `/v1/models`, `/v1/generate`,
 `/v1/generate/stream` (SSE), `/v1/generate/batch`, `/v1/design`, `/v1/analyze`,
 `/v1/reward`, `/v1/reload`, `/v1/registry/promote|rollback`, `/v1/eval`,
-`/v1/jobs`. Обучение идёт фоновой задачей, инференс при этом не встаёт.
+`/v1/jobs`, `/docs`, `/openapi.json`. Обучение идёт фоновой задачей, инференс
+при этом не встаёт.
 Защита: `NEXUS_API_KEY=secret` включает `Authorization: Bearer`, плюс
 rate-limit по IP (`--rate-limit`). Ускорение: `--compile` (torch.compile).
 

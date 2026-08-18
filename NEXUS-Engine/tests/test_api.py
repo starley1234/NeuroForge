@@ -127,3 +127,47 @@ def test_job_manager_runs_command(tmp_path):
     finished = jm.get(job.id)
     assert finished.status == "done" and finished.returncode == 0
     assert "total_gb" in jm.logs(job.id)
+
+
+# ─────────────────────────────────────────────── документация OpenAPI
+def test_openapi_spec_is_complete_and_serializable():
+    from nexus.serve.openapi import build_spec
+    spec = build_spec(8000)
+    assert spec["openapi"].startswith("3.1")
+    json.dumps(spec)                                    # сериализуется без ошибок
+    paths = spec["paths"]
+    for required in ("/health", "/v1/generate", "/v1/analyze", "/v1/reward",
+                     "/v1/design", "/v1/models", "/v1/jobs", "/metrics"):
+        assert required in paths, required
+    analyze = paths["/v1/analyze"]["post"]
+    assert "requestBody" in analyze and "200" in analyze["responses"]
+    props = analyze["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    assert {"code", "material", "force", "fixture", "grid"} <= set(props)
+
+
+def test_docs_endpoints_served(tmp_path):
+    import threading
+    import urllib.request
+
+    from nexus import NexusConfig, NexusEngine
+    from nexus.registry import ModelRegistry
+    from nexus.serve.app import create_server
+
+    reg = ModelRegistry(str(tmp_path / "registry"))
+    model = NexusEngine(NexusConfig.tiny())
+    reg.save("core", model.state_dict(), model.cfg.to_dict())
+    server, _ = create_server("127.0.0.1", 0, registry_root=str(tmp_path / "registry"),
+                              model="core", ref="latest", api_key="secret")
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/openapi.json", timeout=10) as r:
+            spec = json.load(r)                          # без ключа — документация открыта
+        assert spec["info"]["title"] == "NEXUS-Engine API"
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/docs", timeout=10) as r:
+            assert b"swagger" in r.read().lower()
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/favicon.ico", timeout=10) as r:
+            assert r.status == 204
+    finally:
+        server.shutdown()
+        server.server_close()

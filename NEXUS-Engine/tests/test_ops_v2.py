@@ -232,3 +232,22 @@ def test_trainer_resolves_auto_device(tmp_path):
                       log_every=100, registry_root=str(tmp_path))
     tr = Trainer(NexusEngine(NexusConfig.tiny()), cfg, ds)
     assert tr.cfg.device in ("cpu", "cuda", "mps")
+
+
+def test_small_preset_fits_and_is_trainable():
+    """Пресет small (~200M) — первый осмысленный размер для 16 ГБ."""
+    from nexus.config import NexusConfig
+    from nexus.eval.vram import estimate
+    cfg = NexusConfig.small()
+    assert cfg.d_latent == 768 and cfg.n_layers == 12
+    budget = estimate(cfg).to_dict()
+    assert budget["fits_16gb"] and budget["total_gb"] < 4.0
+
+
+def test_quickstart_overrides_scale_defaults(tmp_path):
+    from nexus.quickstart import run_quickstart
+    res = run_quickstart("nano", "core", str(tmp_path), device="cpu",
+                         samples=4, steps=3, vocab=600, seq_len=64, math_samples=20)
+    assert res.steps["flywheel"]["total"] == 4
+    assert res.steps["training"]["metrics"]["steps"] <= 3
+    assert res.steps["tokenizer"]["vocab_size"] <= 620

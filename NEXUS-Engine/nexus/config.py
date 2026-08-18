@@ -125,6 +125,26 @@ class NexusConfig:
         )
 
     @classmethod
+    def small(cls) -> "NexusConfig":
+        """~200M весов (110M активных): первый осмысленный прогон на 16 ГБ.
+
+        На RTX 5060 Ti это часы, а не недели, и модель уже способна выучить
+        синтаксис OpenSCAD и связь «ТЗ → параметры детали».
+        """
+        return cls(
+            d_latent=768,
+            n_layers=12,
+            vocab_size=16384,
+            action_dim=12,
+            field_grid=16,
+            ttt=TTTConfig(chunk_size=128, key_dim=64, value_dim=64, n_heads=6),
+            attention=AttentionConfig(window=512, n_heads=12, n_kv_heads=4),
+            moe=MoEConfig(n_experts=8, n_active=2, n_shared=1, expert_hidden_mult=1.0),
+            reasoning=ReasoningConfig(max_steps=4),
+            fno=FNOConfig(modes=8, width=32, depth=3, grid=16),
+        )
+
+    @classmethod
     def rtx5060(cls) -> "NexusConfig":
         """Целевой профиль: ~1.36B активных параметров, ~7.7B суммарных весов MoE."""
         return cls()

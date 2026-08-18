@@ -12,15 +12,21 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Optional
 
 SCALES: Dict[str, Dict[str, Any]] = {
-    #                      детали  сетка  fem   vocab  seq  шаги  эпохи
-    "nano":   dict(samples=8,   grid=14, fem=8,  vocab=1024, seq_len=128, max_steps=8,   preset="tiny"),
-    "small":  dict(samples=48,  grid=18, fem=12, vocab=2048, seq_len=256, max_steps=60,  preset="tiny"),
-    "medium": dict(samples=256, grid=24, fem=16, vocab=4096, seq_len=512, max_steps=400, preset="tiny"),
-    "gpu":    dict(samples=2000, grid=32, fem=24, vocab=16384, seq_len=1024, max_steps=4000,
-                   preset="rtx5060-compact"),
+    # Ориентиры времени: nano/small — CPU-секунды, medium — минуты CPU,
+    # gpu — часы на RTX 5060 Ti, gpu-large — сутки.
+    "nano":   dict(samples=8,     grid=14, fem=8,  vocab=1024,  seq_len=128,  max_steps=8,
+                   preset="tiny",  batch=2, math=0),
+    "small":  dict(samples=48,    grid=18, fem=12, vocab=2048,  seq_len=256,  max_steps=60,
+                   preset="tiny",  batch=2, math=200),
+    "medium": dict(samples=500,   grid=22, fem=14, vocab=8192,  seq_len=512,  max_steps=1500,
+                   preset="small", batch=4, math=5000),
+    "gpu":    dict(samples=5000,  grid=26, fem=16, vocab=16384, seq_len=1024, max_steps=20000,
+                   preset="small", batch=8, math=50000),
+    "gpu-large": dict(samples=20000, grid=32, fem=24, vocab=32768, seq_len=1024,
+                      max_steps=60000, preset="rtx5060-compact", batch=4, math=200000),
 }
 
 
@@ -48,10 +54,20 @@ def run_quickstart(
     skip_data: bool = False,
     serve_after: bool = False,
     port: int = 8000,
+    samples: Optional[int] = None,
+    steps: Optional[int] = None,
+    vocab: Optional[int] = None,
+    seq_len: Optional[int] = None,
+    preset: Optional[str] = None,
+    math_samples: Optional[int] = None,
 ) -> QuickstartResult:
     from .runtime import describe, gpu_report, pick_device
     device = pick_device(device)
     cfg = dict(SCALES[scale])
+    for key, value in (("samples", samples), ("max_steps", steps), ("vocab", vocab),
+                       ("seq_len", seq_len), ("preset", preset), ("math", math_samples)):
+        if value is not None:
+            cfg[key] = value
     if device.startswith("cuda") and scale in ("nano", "small"):
         print(f"[nexus] обнаружен GPU ({describe(device)}). "
               f"Для полноценного прогона используйте --scale gpu")
@@ -102,23 +118,30 @@ def run_quickstart(
         steps["flywheel"] = stats.to_dict()
         print(f"   {stats.to_dict()}")
 
+    math_n = int(cfg.get("math", 0))
+    corpus = f"flywheel:{data_dir}"
+    if math_n:
+        corpus = (f"mix:flywheel:{data_dir}=0.7,mathgen:{math_n}#seed=1=0.3")
+        print(f"   + инженерная математика: {math_n} задач в микс (30 % корпуса)")
+
     # 3 ── токенизатор -----------------------------------------------------
     _banner(3, total, f"Обучение BPE-токенизатора (vocab {cfg['vocab']})")
     from .data.bpe import train_from_source
-    _, tok_stats = train_from_source(f"flywheel:{data_dir}", vocab_size=cfg["vocab"],
-                                     out=tok_path, verbose=False)
+    _, tok_stats = train_from_source(corpus, vocab_size=cfg["vocab"], out=tok_path,
+                                     limit=20000 if math_n else None, verbose=False)
     steps["tokenizer"] = tok_stats
     print(f"   {tok_stats['merges']:.0f} мёржей, сжатие "
           f"{tok_stats['compression_bytes_per_token']:.2f} байт/токен → {tok_path}")
 
     # 4 ── обучение --------------------------------------------------------
-    _banner(4, total, f"Обучение ядра ({cfg['max_steps']} шагов, пресет {cfg['preset']})")
+    _banner(4, total, f"Обучение ядра ({cfg['max_steps']} шагов, пресет {cfg['preset']}, "
+                      f"батч {cfg.get('batch', 2)})")
     from .training.train_lm import train as train_lm
-    out = train_lm(f"flywheel:{data_dir}", model_name, cfg["preset"], seq_len=cfg["seq_len"],
+    out = train_lm(corpus, model_name, cfg["preset"], seq_len=cfg["seq_len"],
                    registry_root=registry_root, tokenizer_path=tok_path,
-                   max_steps=cfg["max_steps"], batch_size=2, grad_accum=4,
-                   device=device, amp=device.startswith("cuda"),
-                   log_every=max(1, cfg["max_steps"] // 5))
+                   max_steps=cfg["max_steps"], batch_size=int(cfg.get("batch", 2)),
+                   grad_accum=4, device=device, amp=device.startswith("cuda"),
+                   log_every=max(1, cfg["max_steps"] // 20))
     steps["training"] = {"metrics": out["metrics"], "version": out["version"]["version"]}
     print(f"   версия {out['version']['name']}:v{out['version']['version']:04d}, "
           f"val_loss={out['metrics'].get('val_loss')}")
@@ -131,6 +154,10 @@ def run_quickstart(
     report = evaluate_version(model_name, "latest", None, registry_root,
                               f"flywheel:{data_dir}", seq_len=128,
                               thresholds=thresholds, gate=True, device=device)
+    if scale in ("nano", "small"):
+        print("   Это демо-масштаб: модель проверяет работоспособность пайплайна, "
+              "языку она ещё не научилась.\n   Реальный прогон: --scale medium (минуты) "
+              "или --scale gpu (часы на RTX).")
     steps["evaluation"] = report.to_dict()
     print(report.summary())
 
