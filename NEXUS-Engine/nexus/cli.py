@@ -117,6 +117,18 @@ def _cmd_vram(args) -> int:
     return 0
 
 
+def _cmd_ablate(args) -> int:
+    from .eval.ablate import VARIANTS, format_table, run_ablation
+    variants = args.variants.split(",") if args.variants else list(VARIANTS)
+    results = run_ablation(variants, args.source, args.preset, args.steps, args.seq_len,
+                           args.batch_size, args.lr, args.device, args.seed, args.workdir)
+    print(format_table(results))
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump([r.to_dict() for r in results], fh, indent=2, ensure_ascii=False)
+    return 0
+
+
 def _cmd_quickstart(args) -> int:
     from .quickstart import run_quickstart
     res = run_quickstart(args.scale, args.model_name, args.workdir, args.device,
@@ -578,6 +590,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--serve", action="store_true", help="сразу поднять API после обучения")
     p.add_argument("--port", type=int, default=8000)
     p.set_defaults(fn=_cmd_quickstart)
+
+    p = sub.add_parser("ablate", help="A/B: что даёт каждый блок архитектуры")
+    p.add_argument("--variants", default=None,
+                   help="через запятую: full,no_ttt,no_attention,dense_ffn,no_reasoning")
+    p.add_argument("--source", default="mix:builtin:engineering=0.5,mathgen:2000#seed=3=0.5")
+    p.add_argument("--preset", choices=["tiny", "small", "rtx5060", "rtx5060-compact"],
+                   default="tiny")
+    p.add_argument("--steps", type=int, default=300)
+    p.add_argument("--seq-len", type=int, default=256)
+    p.add_argument("--batch-size", type=int, default=4)
+    p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--device", default="auto")
+    p.add_argument("--workdir", default="artifacts/ablation")
+    p.add_argument("--json", default=None)
+    p.set_defaults(fn=_cmd_ablate)
 
     p = sub.add_parser("doctor", help="диагностика окружения и самопроверка")
     p.set_defaults(fn=_cmd_doctor)

@@ -390,3 +390,40 @@ def test_service_reports_quality_hint_for_undertrained_model(tmp_path):
              metrics={"val_ppl": 12.0, "steps": 20000})
     svc2 = InferenceService(str(tmp_path / "reg"), "core", "latest")
     assert svc2.generate("<task>тест", max_new_tokens=4)["quality_hint"] is None
+
+
+# ─────────────────────────────────────────── абляции: вклад каждого блока
+@pytest.mark.parametrize("flags", [
+    {}, {"use_ttt": False}, {"use_attention": False}, {"use_moe": False},
+])
+def test_architecture_variants_train_and_differ(flags):
+    """Каждый компонент можно отключить, модель остаётся обучаемой."""
+    from nexus.config import NexusConfig
+    from nexus.model import NexusEngine
+    cfg = NexusConfig.tiny()
+    for key, value in flags.items():
+        setattr(cfg, key, value)
+    model = NexusEngine(cfg)
+    tokens = torch.randint(4, cfg.vocab_size, (2, 32))
+    stats = model.loss(tokens, tokens)
+    stats["loss"].backward()
+    assert torch.isfinite(stats["loss"])
+    assert any(p.grad is not None for p in model.parameters())
+    if not flags.get("use_moe", True):
+        report = model.parameter_report()
+        assert report["moe_params"] == 0.0
+
+
+def test_ablation_reports_constant_state_size(tmp_path):
+    from nexus.config import NexusConfig
+    from nexus.eval.ablate import format_table, run_ablation, state_bytes_at
+    from nexus.model import NexusEngine
+    model = NexusEngine(NexusConfig.tiny()).eval()
+    w = model.cfg.attention.window
+    assert state_bytes_at(model, 4 * w, "cpu") == state_bytes_at(model, 12 * w, "cpu")
+
+    results = run_ablation(["full", "dense_ffn"], source="builtin:engineering",
+                           steps=2, seq_len=64, batch_size=2, workdir=str(tmp_path))
+    assert len(results) == 2
+    assert all(r.state_kb_4k == r.state_kb_16k for r in results)
+    assert "val_ppl" in format_table(results)

@@ -20,6 +20,8 @@
 Если torch уже стоял в CPU-сборке: `.\nexus.ps1 gpu` / `./nexus.sh gpu`.
 
 Пошагово и с разбором проблем — [docs/QUICKSTART.md](docs/QUICKSTART.md).
+Что здесь на самом деле построено и что из этого измерено —
+[docs/WHAT_WE_BUILT.md](docs/WHAT_WE_BUILT.md).
 
 ```
 Уровень 1  Continuous Dynamic Encoders   AST-BPE · SSM-Audio/Video · B-Rep GNO · Point-SSM · Event-ODE · Neural-ODE био
@@ -51,7 +53,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 114 тестов, ~35 с на CPU
+pytest -q                        # 120 тестов, ~40 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -95,6 +97,7 @@ nexus train-fno --data artifacts/flywheel --epochs 30   # фаза 2: FNO-сур
 nexus pretrain  --data artifacts/flywheel --preset tiny # фаза 3: ядро
 nexus rl --steps 10                                     # фаза 4: GRPO с физическими наградами
 nexus needle --lengths 1024,8192,32768                  # O(1) память
+nexus ablate --steps 300                                # что даёт каждый блок (A/B)
 nexus vram --preset rtx5060                             # бюджет VRAM
 ```
 
@@ -382,14 +385,16 @@ nexus/
   training/                 trainer.py (общий цикл) · train_lm.py · distill.py
                             pretrain.py · train_fno.py · grpo.py · rewards.py
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
-  eval/                     suite.py (quality gate) · needle.py · vram.py
-tests/                      114 тестов: геометрия, ядро, пайплайн, реестр, обучение,
+  eval/                     suite.py (quality gate) · ablate.py (A/B блоков)
+                            needle.py · vram.py
+tests/                      120 тестов: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       QUICKSTART.md · TRAINING_GUIDE.md · DATA_PLAN.md
+docs/                       QUICKSTART.md · WHAT_WE_BUILT.md · TRAINING_GUIDE.md
+                            DATA_PLAN.md
                             architecture.md · training.md · api.md · operations.md
                             vram_budget.md · roadmap.md
 ```

@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: help install test demo flywheel datasets gen-math collect mcp pretrain fno rl train-lm distill guide eval serve registry needle vram
+.PHONY: help install test demo flywheel datasets gen-math collect mcp pretrain fno rl train-lm distill guide eval ablate serve registry needle vram
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/'
@@ -55,6 +55,9 @@ serve:  ## HTTP API на 0.0.0.0:8000
 
 registry:  ## содержимое реестра моделей
 	$(PY) -m nexus.cli registry list
+
+ablate:  ## A/B: что даёт каждый блок архитектуры
+	$(PY) -m nexus.cli ablate --steps 300
 
 needle:  ## тест O(1) памяти на длинном контексте
 	$(PY) -m nexus.cli needle --lengths 1024,8192,32768

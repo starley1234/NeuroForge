@@ -52,11 +52,13 @@ class NexusEngine(nn.Module):
         """Выходы остаточных веток масштабируются на 1/sqrt(2·L) (как в GPT-2)."""
         scale = (2 * max(self.cfg.n_layers, 1)) ** -0.5
         for block in self.blocks:
-            for proj in (block.memory.out, block.attention.out):
-                with torch.no_grad():
+            projections = [m.out for m in (block.memory, block.attention) if m is not None]
+            experts = (list(block.moe.experts) + list(block.moe.shared)
+                       if block.moe is not None else [block.ffn])
+            with torch.no_grad():
+                for proj in projections:
                     proj.weight.mul_(scale)
-            for expert in list(block.moe.experts) + list(block.moe.shared):
-                with torch.no_grad():
+                for expert in experts:
                     expert.w_down.weight.mul_(scale)
 
     # ------------------------------------------------------- регистрация мод.
@@ -235,8 +237,9 @@ class NexusEngine(nn.Module):
 
     # ------------------------------------------------------------ статистика
     def parameter_report(self) -> Dict[str, float]:
-        moe_total = sum(count_parameters(b.moe) for b in self.blocks)
-        frac = self.blocks[0].moe.active_param_fraction if self.blocks else 1.0
+        moe_total = sum(count_parameters(b.moe) for b in self.blocks if b.moe is not None)
+        first_moe = next((b.moe for b in self.blocks if b.moe is not None), None)
+        frac = first_moe.active_param_fraction if first_moe is not None else 1.0
         total = count_parameters(self)
         active = total - moe_total + moe_total * frac
         return {

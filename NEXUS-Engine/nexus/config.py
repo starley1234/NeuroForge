@@ -73,6 +73,11 @@ class NexusConfig:
     action_dim: int = 12             # непрерывные действия / траектории
     field_grid: int = 16             # выход тензорных полей FEM/CFD
 
+    # переключатели для абляций (nexus ablate): что именно даёт каждый блок
+    use_ttt: bool = True             # Fast-Weights память (O(1) контекст)
+    use_attention: bool = True       # локальное скользящее окно
+    use_moe: bool = True             # разреженные эксперты; False — обычный FFN
+
     ttt: TTTConfig = field(default_factory=TTTConfig)
     attention: AttentionConfig = field(default_factory=AttentionConfig)
     moe: MoEConfig = field(default_factory=MoEConfig)
