@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-capital"
+version = "0.1.0"
+description = "NEXUS-Capital (VALUEX): Value-Augmented Latent Universal Exchange & Economic Reasoning Engine"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "NeuroForge" }]
+license = { text = "MIT" }
+dependencies = [
+    "torch>=2.2.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.8.0",
+    "pyyaml>=6.0",
+    "pyarrow>=14.0.0",
+    "tokenizers>=0.15.0",
+    "huggingface_hub>=0.20.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.setuptools.packages.find]
+include = ["nexus_capital*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cache-clear"

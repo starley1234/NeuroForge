@@ -1,0 +1,49 @@
+# Лёгкая конфигурация для CPU/CI и быстрых тестов
+model:
+  d_value: 128
+  n_layers: 2
+  n_heads: 4
+  d_ff: 256
+  dropout: 0.0
+
+encoders:
+  orderbook_levels: 16
+  tick_features: 8
+  tabular_features: 16
+  graph_node_dim: 16
+  audio_n_mels: 32
+  text_vocab_size: 1024
+  text_seq_len: 128
+
+ttt:
+  rank: 16
+  alpha: 0.95
+  eta: 0.05
+  mem_dim: 32
+
+moe:
+  n_experts: 4
+  experts_per_token: 1
+  expert_ff: 128
+
+sde:
+  hidden: 32
+  steps: 16
+  mc_paths: 64
+  mc_horizon: 8
+
+utility:
+  gamma_risk: 1.0
+  risk_alpha: 0.05
+  lambda_utility: 1.0
+  lambda_var: 0.5
+  discount_rate: 0.05
+
+training:
+  lr: 3.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+  batch_size: 4
+  steps: 100
+  use_amp: false
+  use_8bit: false

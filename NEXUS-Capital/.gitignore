@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Чекпоинты и большие артефакты
+checkpoints/
+runs/
+artifacts/
+*.pt
+*.pth
+*.ckpt
+
+# Реальные и обработанные данные
+data/raw/
+data/processed/
+data/!**/.gitkeep
+*.parquet
+*.zip
+*.csv
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
