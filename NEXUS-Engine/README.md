@@ -51,7 +51,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 92 теста, ~45 с на CPU
+pytest -q                        # 103 теста, ~50 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -153,6 +153,10 @@ nexus collect --teacher command --command "claude -p" -n 500 --attempts 3
 
 ### 3.3 Обучение на стандартном датасете
 
+Полный регламент («как правильно») — [docs/TRAINING_GUIDE.md](docs/TRAINING_GUIDE.md):
+холдаут отдельным источником, пробный прогон, ранняя остановка с возвратом лучших
+весов, приёмка с гейтом, откат.
+
 ```bash
 nexus train-lm --source builtin:engineering            # офлайн-корпус, работает сразу
 nexus train-lm --source dir:./corpus --seq-len 1024 --grad-accum 16 --device cuda --amp
@@ -193,6 +197,8 @@ artifacts/registry/core/
 ```
 
 * новая версия — **новый каталог**, перезапись запрещена на уровне API;
+* в метриках версии — `train_ce`, `val_loss`, `val_ppl`, `overfit_gap`, `best_step`,
+  `restored_best`; сравнение версий: `nexus registry compare --ref v7 --tag v8`;
 * запись атомарна (tmp → `os.replace`), в `meta.json` пишутся конфиг, метрики,
   родительская версия, датасет, стадия, git-коммит и sha256;
 * `load()` сверяет sha256; `prune` не трогает версии под тегами;
@@ -207,7 +213,7 @@ nexus eval --model-name core --ref latest --baseline production \
 
 Проверки: конечность логитов, перплексия, вырожденность генерации, детерминизм
 greedy, латентность, постоянство размера TTT-состояния, доля компилируемых
-SCAD-генераций, регрессия к базовой версии. Тег `production` переключается
+SCAD-генераций, **разрыв val − train (переобучение)**, регрессия к базовой версии. Тег `production` переключается
 **только** при полном прохождении; код возврата пригоден для CI.
 
 ### 3.7 HTTP API
@@ -375,15 +381,15 @@ nexus/
                             pretrain.py · train_fno.py · grpo.py · rewards.py
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
   eval/                     suite.py (quality gate) · needle.py · vram.py
-tests/                      92 теста: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      103 теста: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
                             для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       QUICKSTART.md · DATA_PLAN.md · architecture.md
-                            training.md · api.md · operations.md · vram_budget.md
-                            roadmap.md
+docs/                       QUICKSTART.md · TRAINING_GUIDE.md · DATA_PLAN.md
+                            architecture.md · training.md · api.md · operations.md
+                            vram_budget.md · roadmap.md
 ```
 
 ---

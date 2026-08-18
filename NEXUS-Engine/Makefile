@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: help install test demo flywheel datasets gen-math collect mcp pretrain fno rl train-lm distill eval serve registry needle vram
+.PHONY: help install test demo flywheel datasets gen-math collect mcp pretrain fno rl train-lm distill guide eval serve registry needle vram
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/'
@@ -43,6 +43,9 @@ train-lm:  ## обучение на стандартном датасете (в�
 
 distill:  ## самодистилляция из последней версии в реестре
 	$(PY) -m nexus.cli distill --teacher-nexus core --teacher-ref latest --mode logit
+
+guide:  ## открыть регламент обучения
+	@echo docs/TRAINING_GUIDE.md
 
 eval:  ## приёмочные тесты последней версии против production
 	$(PY) -m nexus.cli eval --model-name core --ref latest --baseline production

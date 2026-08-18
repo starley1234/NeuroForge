@@ -13,6 +13,7 @@
 `latency`               мс на токен не выше порога
 `memory_o1`             размер TTT-состояния не растёт с длиной контекста
 `scad_compile_rate`     доля генераций, компилируемых в валидный CSG
+`overfit_gap`           разрыв между валидацией и обучением (переобучение)
 `regression`            метрики не хуже базовой версии (с допуском)
 ======================  ======================================================
 """
@@ -85,6 +86,7 @@ class SuiteThresholds:
     max_ms_per_token: float = 5000.0
     min_scad_compile_rate: float = 0.0
     max_ppl_regression: float = 1.10     # не более +10 % к базовой перплексии
+    max_overfit_gap: float = 1.0         # val_loss − train_ce, в наtах на токен
 
 
 @torch.no_grad()
@@ -117,6 +119,7 @@ def run_suite(
     prompts: Optional[List[str]] = None,
     n_scad_samples: int = 4,
     tokenizer=None,
+    train_metrics: Optional[Dict[str, float]] = None,
 ) -> SuiteReport:
     th = thresholds or SuiteThresholds()
     rep = SuiteReport(name, version, baseline=baseline)
@@ -187,7 +190,15 @@ def run_suite(
     rep.add("scad_compile_rate", round(rate, 3), rate >= th.min_scad_compile_rate,
             th.min_scad_compile_rate)
 
-    # 7. регрессия к базовой версии
+    # 7. переобучение: насколько валидация хуже обучающей выборки
+    train_ce = (train_metrics or {}).get("train_ce")
+    if train_ce:
+        gap = loss - float(train_ce)
+        rep.metrics["overfit_gap"] = round(gap, 4)
+        rep.add("overfit_gap", round(gap, 4), gap <= th.max_overfit_gap,
+                th.max_overfit_gap, "val_loss − train_ce (больше — модель зубрит)")
+
+    # 8. регрессия к базовой версии
     if baseline and "val_ppl" in baseline and baseline["val_ppl"] > 0:
         ratio = ppl / baseline["val_ppl"]
         rep.metrics["ppl_ratio_vs_baseline"] = round(ratio, 4)
@@ -229,7 +240,8 @@ def evaluate_version(
             print(f"[eval] базовая версия недоступна: {exc}")
 
     report = run_suite(model, name, mv.version, source, seq_len,
-                       thresholds=thresholds, baseline=base_metrics, tokenizer=tokenizer)
+                       thresholds=thresholds, baseline=base_metrics, tokenizer=tokenizer,
+                       train_metrics=mv.metrics)
     report.metrics["sha256_ok"] = 1.0
     if gate and report.passed:
         registry.promote(name, mv.version, promote_tag, reason="quality gate passed")

@@ -40,6 +40,7 @@ class TrainConfig:
     log_every: int = 10
     eval_every: int = 0                  # 0 — только в конце эпохи
     patience: int = 0                    # 0 — без ранней остановки
+    keep_best: bool = True               # вернуть лучшие по валидации веса
     seed: int = 0
     num_workers: int = 0
     reason_every: int = 4                # как часто включать латентный контур
@@ -104,6 +105,9 @@ class Trainer:
         self.loss_fn = loss_fn or (lambda m, b: lm_loss(m, b, reason=bool(b.get("_reason", False))))
         self.registry = registry or ModelRegistry(cfg.registry_root or "artifacts/registry")
         self.history: list[Dict[str, float]] = []
+        self.best_val: float = float("inf")
+        self.best_step: int = -1
+        self._best_state: Optional[Dict[str, torch.Tensor]] = None
 
     # ------------------------------------------------------------------ цикл
     def fit(self) -> Dict[str, float]:
@@ -114,8 +118,9 @@ class Trainer:
         opt = build_optimizer(self.model, cfg.lr, cfg.weight_decay, cfg.eight_bit)
         scaler = torch.amp.GradScaler("cuda", enabled=cfg.amp and cfg.device.startswith("cuda"))
 
-        step, best, bad, t0 = 0, float("inf"), 0, time.time()
+        step, bad, t0 = 0, 0, time.time()
         stop = False
+        train_window: list[float] = []
         self.model.train()
         for epoch in range(cfg.epochs):
             for batch in dl:
@@ -145,20 +150,31 @@ class Trainer:
                     print(f"[{cfg.stage}] step {step:5d}/{total} {msg} "
                           f"lr={opt.param_groups[0]['lr']:.2e} ({time.time() - t0:.1f}s)",
                           flush=True)
-                self.history.append({"step": step,
-                                     **{k: float(v.detach()) for k, v in stats.items()
-                                        if isinstance(v, torch.Tensor)}})
+                entry = {"step": step, **{k: float(v.detach()) for k, v in stats.items()
+                                          if isinstance(v, torch.Tensor)}}
+                self.history.append(entry)
+                train_window.append(entry.get("ce", entry["loss"]))
+                del train_window[:-50]
                 step += 1
 
                 if cfg.eval_every and step % cfg.eval_every == 0 and self.val_ds is not None:
                     val = self.evaluate()
-                    print(f"[{cfg.stage}] val {val}", flush=True)
-                    if val["val_loss"] < best - 1e-4:
-                        best, bad = val["val_loss"], 0
+                    train_ce = sum(train_window) / max(len(train_window), 1)
+                    gap = val["val_loss"] - train_ce
+                    print(f"[{cfg.stage}] val_loss={val['val_loss']:.4f} "
+                          f"ppl={val['val_ppl']:.1f} train_ce={train_ce:.4f} "
+                          f"разрыв={gap:+.4f}"
+                          + ("  <- признак переобучения" if gap > 0.5 else ""), flush=True)
+                    if val["val_loss"] < self.best_val - 1e-4:
+                        self.best_val, self.best_step, bad = val["val_loss"], step, 0
+                        if cfg.keep_best:
+                            self._best_state = {k: v.detach().clone().cpu()
+                                                for k, v in self.model.state_dict().items()}
                     else:
                         bad += 1
                         if cfg.patience and bad >= cfg.patience:
-                            print(f"[{cfg.stage}] ранняя остановка на шаге {step}")
+                            print(f"[{cfg.stage}] ранняя остановка на шаге {step} "
+                                  f"(валидация не улучшалась {bad} проверок подряд)")
                             stop = True
                     self.model.train()
                 if (cfg.max_steps and step >= cfg.max_steps) or stop:
@@ -167,10 +183,28 @@ class Trainer:
             if stop:
                 break
 
-        metrics = {"steps": float(step), "train_loss": self.history[-1]["loss"] if self.history else 0.0,
+        # вернуть лучшие веса, а не последние (защита от переобучения в конце)
+        restored = False
+        if cfg.keep_best and self._best_state is not None:
+            current = self.evaluate().get("val_loss", float("inf")) if self.val_ds else float("inf")
+            if current > self.best_val + 1e-4:
+                self.model.load_state_dict({k: v.to(cfg.device)
+                                            for k, v in self._best_state.items()})
+                restored = True
+                print(f"[{cfg.stage}] восстановлены лучшие веса с шага {self.best_step} "
+                      f"(val_loss={self.best_val:.4f} вместо {current:.4f})", flush=True)
+
+        train_ce = sum(train_window) / max(len(train_window), 1) if train_window else 0.0
+        metrics = {"steps": float(step),
+                   "train_loss": self.history[-1]["loss"] if self.history else 0.0,
+                   "train_ce": round(train_ce, 5),
+                   "train_ppl": round(math.exp(min(train_ce, 20)), 3) if train_ce else 0.0,
+                   "best_step": float(self.best_step),
+                   "restored_best": float(restored),
                    "seconds": round(time.time() - t0, 2)}
         if self.val_ds is not None:
             metrics.update(self.evaluate())
+            metrics["overfit_gap"] = round(metrics["val_loss"] - train_ce, 5)
         return metrics
 
     @torch.no_grad()

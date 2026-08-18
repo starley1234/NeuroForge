@@ -172,3 +172,47 @@ def test_regression_check_against_baseline(tmp_path):
                     thresholds=SuiteThresholds(max_val_ppl=1e9, min_unique_ratio=0.0))
     reg_check = [c for c in rep.checks if c.name == "regression"][0]
     assert not reg_check.passed          # необученная модель хуже базовой
+
+
+# ────────────────────────────────────── защита от переобучения и сравнение
+def test_trainer_restores_best_weights_and_reports_gap(tmp_path):
+    import torch
+
+    from nexus.config import NexusConfig
+    from nexus.data.corpora import PackedLMDataset, split_dataset
+    from nexus.model import NexusEngine
+    from nexus.training.trainer import TrainConfig, Trainer
+
+    ds = PackedLMDataset("builtin:engineering", seq_len=32, min_blocks=8)
+    train_ds, val_ds = split_dataset(ds, 0.25)
+    cfg = TrainConfig(max_steps=6, batch_size=2, grad_accum=1, eval_every=2,
+                      log_every=100, keep_best=True, registry_root=str(tmp_path))
+    tr = Trainer(NexusEngine(NexusConfig.tiny()), cfg, train_ds, val_ds)
+    metrics = tr.fit()
+    assert tr.best_step >= 0 and tr._best_state is not None
+    assert "overfit_gap" in metrics and "train_ce" in metrics
+    assert metrics["val_loss"] <= tr.best_val + 1e-3      # веса не хуже лучших
+
+
+def test_train_lm_accepts_separate_validation_source(tmp_path):
+    from nexus.data.mathgen import write_jsonl
+    from nexus.training.train_lm import train
+    holdout = str(tmp_path / "holdout.jsonl")
+    write_jsonl(20, holdout, seed=99)
+    out = train("builtin:engineering", "core", "tiny", seq_len=64,
+                val_source=f"jsonl:{holdout}#text", registry_root=str(tmp_path / "reg"),
+                max_steps=2, batch_size=2, grad_accum=1, eval_every=2, log_every=100)
+    assert out["metrics"]["val_loss"] > 0
+
+
+def test_suite_flags_overfitting(tmp_path):
+    from nexus.config import NexusConfig
+    from nexus.eval.suite import SuiteThresholds, run_suite
+    from nexus.model import NexusEngine
+    model = NexusEngine(NexusConfig.tiny())
+    th = SuiteThresholds(max_val_ppl=1e9, min_unique_ratio=0.0, max_overfit_gap=0.1)
+    # искусственно «идеальная» обучающая выборка → большой разрыв
+    rep = run_suite(model, "core", 1, seq_len=32, n_scad_samples=1, thresholds=th,
+                    train_metrics={"train_ce": 0.01})
+    check = [c for c in rep.checks if c.name == "overfit_gap"][0]
+    assert not check.passed and rep.metrics["overfit_gap"] > 0.1

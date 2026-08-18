@@ -26,6 +26,7 @@ def train(
     seq_len: int = 512,
     limit: Optional[int] = None,
     val_fraction: float = 0.1,
+    val_source: Optional[str] = None,
     tokenizer_path: Optional[str] = None,
     registry_root: str = "artifacts/registry",
     promote: bool = False,
@@ -40,7 +41,15 @@ def train(
     ds = PackedLMDataset(source, tokenizer=tokenizer, seq_len=seq_len, limit=limit,
                          min_blocks=8)
     cfg.vocab_size = max(cfg.vocab_size, ds.tok.vocab_size)
-    train_ds, val_ds = split_dataset(ds, val_fraction)
+    if val_source:
+        # честный холдаут: валидация из отдельного источника, без пересечения
+        train_ds = ds
+        val_ds = PackedLMDataset(val_source, tokenizer=tokenizer, seq_len=seq_len,
+                                 min_blocks=2)
+        print(f"[data] валидация из отдельного источника {val_source}: "
+              f"{val_ds.stats.to_dict()}")
+    else:
+        train_ds, val_ds = split_dataset(ds, val_fraction)
     print(f"[data] {source}: {ds.stats.to_dict()}")
 
     registry = ModelRegistry(registry_root)
@@ -74,6 +83,10 @@ def main() -> None:
     ap.add_argument("--max-steps", type=int, default=None)
     ap.add_argument("--eval-every", type=int, default=0)
     ap.add_argument("--patience", type=int, default=0)
+    ap.add_argument("--val-source", default=None,
+                    help="отдельный корпус для валидации (честный холдаут)")
+    ap.add_argument("--no-keep-best", action="store_true",
+                    help="сохранять последние веса вместо лучших по валидации")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--amp", action="store_true")
     ap.add_argument("--eight-bit", action="store_true")
@@ -81,7 +94,8 @@ def main() -> None:
     ap.add_argument("--promote", action="store_true", help="сразу пометить как production")
     a = ap.parse_args()
     out = train(a.source, a.model_name, a.preset, a.resume, a.seq_len, a.limit,
-                tokenizer_path=a.tokenizer, registry_root=a.registry, promote=a.promote,
+                val_source=a.val_source, tokenizer_path=a.tokenizer,
+                registry_root=a.registry, promote=a.promote, keep_best=not a.no_keep_best,
                 epochs=a.epochs, batch_size=a.batch_size, grad_accum=a.grad_accum,
                 lr=a.lr, max_steps=a.max_steps, eval_every=a.eval_every,
                 patience=a.patience, device=a.device, amp=a.amp, eight_bit=a.eight_bit)

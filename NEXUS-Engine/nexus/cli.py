@@ -272,8 +272,9 @@ def _cmd_demo(args) -> int:
 def _cmd_train_lm(args) -> int:
     from .training.train_lm import train
     out = train(args.source, args.model_name, args.preset, args.resume, args.seq_len,
-                args.limit, tokenizer_path=args.tokenizer,
+                args.limit, val_source=args.val_source, tokenizer_path=args.tokenizer,
                 registry_root=args.registry, promote=args.promote,
+                keep_best=not args.no_keep_best,
                 epochs=args.epochs, batch_size=args.batch_size, grad_accum=args.grad_accum,
                 lr=args.lr, max_steps=args.max_steps, eval_every=args.eval_every,
                 patience=args.patience, device=args.device, amp=args.amp,
@@ -309,7 +310,8 @@ def _cmd_distill(args) -> int:
 def _cmd_eval(args) -> int:
     from .eval.suite import SuiteThresholds, evaluate_version
     th = SuiteThresholds(max_val_ppl=args.max_ppl, min_scad_compile_rate=args.min_compile,
-                         max_ppl_regression=args.max_regression)
+                         max_ppl_regression=args.max_regression,
+                         max_overfit_gap=args.max_overfit)
     report = evaluate_version(args.model_name, args.ref, args.baseline, args.registry,
                               args.source, args.seq_len, th, args.gate, device=args.device)
     print(report.summary())
@@ -317,6 +319,10 @@ def _cmd_eval(args) -> int:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(report.to_dict(), fh, indent=2, ensure_ascii=False)
     return 0 if report.passed else 1
+
+
+def _fmt(value) -> str:
+    return f"{value:.5g}" if isinstance(value, float) else str(value)
 
 
 def _cmd_registry(args) -> int:
@@ -336,6 +342,27 @@ def _cmd_registry(args) -> int:
     elif args.action == "rollback":
         print(json.dumps(reg.rollback(args.model_name, args.tag, args.steps).to_dict(),
                          indent=2, ensure_ascii=False, default=str))
+    elif args.action == "compare":
+        a_ver, b_ver = reg.get(args.model_name, args.ref), reg.get(args.model_name, args.tag)
+        lower_better = ("loss", "ppl", "_ce", "gap", "error", "mse", "latency", "seconds")
+        higher_better = ("rate", "accuracy", "reward", "score", "sf", "compile")
+        neutral = ("steps", "best_step", "restored_best", "corpus_tokens", "epoch")
+        keys = sorted(set(a_ver.metrics) | set(b_ver.metrics))
+        print(f"{'метрика':22s} {a_ver.tag:>14s} {b_ver.tag:>14s}   дельта")
+        for k in keys:
+            va, vb = a_ver.metrics.get(k), b_ver.metrics.get(k)
+            delta = ""
+            if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+                diff = vb - va
+                if k in neutral or abs(diff) < 1e-12:
+                    delta = f"{diff:+.4g}"
+                elif any(t in k for t in lower_better):
+                    delta = f"{diff:+.4g} ({'лучше' if diff < 0 else 'хуже'})"
+                elif any(t in k for t in higher_better):
+                    delta = f"{diff:+.4g} ({'лучше' if diff > 0 else 'хуже'})"
+                else:
+                    delta = f"{diff:+.4g}"
+            print(f"{k:22s} {_fmt(va):>14s} {_fmt(vb):>14s}   {delta}")
     elif args.action == "prune":
         removed = reg.prune(args.model_name, args.keep, dry_run=args.dry_run)
         print(json.dumps({"removed": removed, "dry_run": args.dry_run}, ensure_ascii=False))
@@ -450,8 +477,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--grad-accum", type=int, default=8)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--max-steps", type=int, default=None)
-    p.add_argument("--eval-every", type=int, default=0)
-    p.add_argument("--patience", type=int, default=0)
+    p.add_argument("--eval-every", type=int, default=0,
+                   help="как часто считать валидацию (шагов)")
+    p.add_argument("--patience", type=int, default=0,
+                   help="ранняя остановка: сколько проверок терпеть без улучшения")
+    p.add_argument("--val-source", default=None,
+                   help="отдельный корпус для валидации (честный холдаут)")
+    p.add_argument("--no-keep-best", action="store_true",
+                   help="сохранить последние веса вместо лучших по валидации")
     p.add_argument("--device", default="auto")
     p.add_argument("--amp", action="store_true")
     p.add_argument("--eight-bit", action="store_true")
@@ -492,6 +525,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-ppl", type=float, default=1e6)
     p.add_argument("--min-compile", type=float, default=0.0)
     p.add_argument("--max-regression", type=float, default=1.10)
+    p.add_argument("--max-overfit", type=float, default=1.0,
+                   help="допустимый разрыв val_loss − train_ce")
     p.add_argument("--gate", action="store_true", help="повысить до production при успехе")
     p.add_argument("--json", default=None, help="сохранить отчёт в файл")
     p.add_argument("--registry", default="artifacts/registry")
@@ -499,10 +534,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(fn=_cmd_eval)
 
     p = sub.add_parser("registry", help="реестр моделей: версии, теги, откат")
-    p.add_argument("action", choices=["list", "show", "history", "promote", "rollback", "prune"])
+    p.add_argument("action", choices=["list", "show", "history", "compare", "promote",
+                                      "rollback", "prune"])
     p.add_argument("--model-name", default="core")
-    p.add_argument("--ref", default="latest")
-    p.add_argument("--tag", default="production")
+    p.add_argument("--ref", default="latest", help="версия A (для compare)")
+    p.add_argument("--tag", default="production", help="тег или версия B (для compare)")
     p.add_argument("--steps", type=int, default=1)
     p.add_argument("--keep", type=int, default=5)
     p.add_argument("--dry-run", action="store_true")
