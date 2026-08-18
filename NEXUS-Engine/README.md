@@ -1,0 +1,209 @@
+# NEXUS-Engine
+
+**N**on-linear **E**pisodic e**X**tensible **U**nified **S**ystem for Physical Intelligence & Engineering — референсная реализация архитектуры **UniPhysical-Latent Framework**: непрерывные динамические энкодеры, физически инвариантное латентное ядро с $O(1)$ памятью и двухрежимный вывод «код + поля».
+
+Проект работает **на CPU из коробки** (все тесты — меньше 10 секунд) и масштабируется до профиля обучения на одной RTX 5060 16 ГБ.
+
+```
+Уровень 1  Continuous Dynamic Encoders   AST-BPE · SSM-Audio/Video · B-Rep GNO · Point-SSM · Event-ODE · Neural-ODE био
+Уровень 2  Physical World Core           Unified Latent Bus (t, xyz, масса, силы) → TTT → Sliding Attention → Sparse MoE → Latent Reasoning + FNO-критик
+Уровень 3  Dual Output Engine            дискретно: OpenSCAD / текст / код   ·   непрерывно: поля FEM/CFD, траектории, G-код
+```
+
+---
+
+## 1. Что здесь реально работает
+
+| Тезис спецификации | Реализация | Где посмотреть |
+| :-- | :-- | :-- |
+| **Tokenization Tax** — 90 % вычислений на статический шум | Непрерывные SSM/ODE-энкодеры по реальному $\Delta t$ + «дельта новизны» вместо патчей | `nexus/encoders/base.py::GatedDeltaSSM`, `novelty_delta` |
+| **Потеря причинности** | Непрерывная ось времени $t$ в секундах, а не индекс токена; шина сортирует события по физическому времени | `nexus/layers/common.py::ContinuousTimeEmbedding`, `nexus/bus.py` |
+| **Слепота к 3D и физике** | SDF/CSG-ядро: объём, масса, центр масс, тензор инерции, полости, толщина стенки, свесы, достижимость фрезой; B-Rep/CSG граф | `nexus/geometry/*`, `nexus/scad/parser.py` |
+| **Квадратичный KV-кэш** | Linear Fast-Weights (TTT): состояние фиксированного размера — на 64k контекста ×1710 компрессии против KV при recall 0.45 даже у необученной памяти | `nexus/layers/ttt.py`, `nexus/eval/needle.py` |
+| **Многословный CoT** | Latent Reasoning Loop с Adaptive Pondering и физическим зондом FNO | `nexus/reasoning/workspace.py` |
+| **OpenSCAD Data Flywheel** | Генератор вариаций → headless-рендер → аудит → пакетный FEM → обучающий кортеж | `nexus/scad/generator.py`, `nexus/data/flywheel.py` |
+| **Physics-RL без критика-сети** | GRPO с наградами +1.0 компиляция / +1.5 manifold / +2.0 прочность | `nexus/training/grpo.py`, `nexus/training/rewards.py` |
+
+Внешние зависимости — только `torch` и `numpy`. `openscad` и `CalculiX (ccx)` подхватываются автоматически, **если установлены**; иначе используются встроенные CSG- и load-path-движки, поэтому маховик данных крутится и в CI без GUI.
+
+---
+
+## 2. Быстрый старт
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"          # или: pip install -r requirements.txt
+
+pytest -q                        # 36 тестов, ~5 с на CPU
+python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
+```
+
+Сквозной демо-прогон (`nexus demo`) печатает примерно следующее:
+
+```
+── 1. Инженерный контур: OpenSCAD → CSG → аудит → FEM ──
+   деталь: bearing_block, масса 210.4 г, σmax 12.7 МПа, запас 16.9, награда +4.50
+── 2. Мультимодальный вход: 5 классов сигналов на одну шину ──
+   пакеты: {'brep': 7, 'audio': 20, 'gaussian': 24, 'event': 32, 'ecg': 16, 'stress': 8}
+── 3. Ядро + латентное рассуждение + двухрежимный вывод ──
+   латентных шагов рассуждения: 2, выход: logits (1, 538, 512), поле (1, 1, 8, 8, 8)
+── 4. O(1) память (Needle-in-a-Haystack) ──
+   контекст 8192: состояние 0.041 МБ против 9.0 МБ у KV-кэша (×219.4)
+── 5. Маховик данных ──
+   {'total': 10, 'compiled': 10, 'manifold': 9, 'fem_passed': 9, 'yield_rate': 0.9}
+── 6. Бюджет VRAM для RTX 5060 (16 ГБ) ──
+   {'core_gb': 2.54, 'moe_gb': 6.75, 'optimizer_gb': 2.54, 'total_gb': 12.21, 'fits_16gb': True}
+```
+
+### CLI
+
+```bash
+nexus info --preset rtx5060 --build      # конфиг, число параметров, бюджет VRAM, доступные бэкенды
+nexus analyze examples/scad/flange.scad --force 0 0 -600 --material alu6061 --stl out.stl
+nexus reward examples/scad/thin_plate_bad.scad          # физическая награда как в RL
+nexus flywheel -n 256 --out artifacts/flywheel          # датасет { ТЗ → SCAD → 3D → FEM }
+nexus train-fno --data artifacts/flywheel --epochs 30   # фаза 2: FNO-суррогат
+nexus pretrain  --data artifacts/flywheel --preset tiny # фаза 3: ядро
+nexus rl --steps 10                                     # фаза 4: GRPO с физическими наградами
+nexus needle --lengths 1024,8192,32768                  # O(1) память
+nexus vram --preset rtx5060                             # бюджет VRAM
+```
+
+(эквивалентно `python -m nexus.cli <команда>`; `make help` — список целей)
+
+---
+
+## 3. Архитектура
+
+### 3.1 Уровень 1 — непрерывные динамические энкодеры
+
+| Класс данных | Энкодер | Модуль |
+| :-- | :-- | :-- |
+| 1. Базовые дискретные (текст, код, AST, математика) | AST-BPE Embedder, обратимый токенизатор с инженерными мёржами | `encoders/text_ast.py`, `data/tokenizer.py` |
+| 2. Аудио / визуальные | Spatio-Temporal SSM по реальному $\Delta t$ (переменный FPS допустим) | `encoders/audio_visual.py` |
+| 3. **Инженерия и наука (приоритет)** | B-Rep/CSG Graph Neural Operator + энкодер тензорных полей FEM/CFD | `encoders/scad_brep.py` |
+| 4. Пространство и физика (Embodied AI) | Point-SSM (3DGS), Event-ODE (DVS), проприоцепция/тактильность | `encoders/spatial.py` |
+| 5. Человек и биофизика | Neural-ODE фильтр по ЭКГ/ЭЭГ/ЭМГ/GSR с неравномерной дискретизацией | `encoders/spatial.py::BiophysicsEncoder` |
+
+Все энкодеры выдают `LatentPacket` — латенты плюс **физические инварианты**: координаты в метрах, время в секундах, масса, вектор силы.
+
+### 3.2 Уровень 2 — физическое инвариантное ядро
+
+**Unified Latent Bus** (`bus.py`) сливает пакеты в единый поток, упорядоченный по физическому времени, и добавляет инварианты к каждому токену.
+
+**NEXUS Deep Layer Stack** (`layers/block.py`), 24 слоя:
+
+1. **Linear Fast-Weight Memory (TTT)** — `layers/ttt.py`
+
+   $$\mathcal{M}_t = (1-\alpha_t)\mathcal{M}_{t-1} - \eta_t \nabla \mathcal{L}_t,\qquad \mathcal{L}_t = \tfrac12\lVert \mathcal{M}_{t-1}k_t - v_t\rVert^2$$
+
+   $\alpha_t,\eta_t$ предсказываются сетью по токену (data-dependent gating). Обработка чанками длины $L{=}128$: внутри чанка всё векторизовано, между чанками — строгая рекуррентность. Тест `test_ttt_chunking_equivalent_to_streaming` проверяет совпадение чанкового и потокового режимов.
+
+2. **Local Sliding-Window Attention** — `layers/sliding_attention.py`, GQA + RoPE, окно $W = 1024\ldots2048$, KV-кэш жёстко обрезается по окну.
+
+3. **Fine-Grained Sparse MoE** — `layers/moe.py`, 1 общий + 4 активных эксперта из 32, балансировка нагрузки и z-loss роутера.
+
+**Latent Reasoning Workspace** (`reasoning/workspace.py`): скрытое состояние циркулирует $k$ раз без генерации токенов; на каждом шаге можно дёрнуть **FNO-суррогат** (`surrogates/fno.py`) и получить мгновенную оценку прочности/аэродинамики; Adaptive Pondering останавливает цикл по накопленной вероятности остановки.
+
+### 3.3 Уровень 3 — двухрежимный вывод
+
+`heads.py`: дискретная голова (OpenSCAD, текст, Python/C++) и непрерывная (траектории/G-код `action_dim`, тензорное поле $G^3$, скаляры «масса / $\sigma_{max}$ / запас прочности»).
+
+---
+
+## 4. OpenSCAD Data Flywheel
+
+```
+Базовые скрипты (examples/scad) → Domain Randomization (5 шаблонов, 6–8 параметров каждый)
+      → Headless-рендер: OpenSCAD или встроенный CSG/SDF → воксели, B-Rep граф, STL
+      → Геометрический аудит: manifold, компоненты, полости, стенка, свесы, ЧПУ-достижимость
+      → Пакетный FEM: CalculiX или load-path решатель → тензор σ
+      → Кортеж { ТЗ + нагрузки → OpenSCAD код → 3D-форма → FEM тензор }
+```
+
+```bash
+nexus flywheel -n 512 --out artifacts/flywheel --grid 24 --fem-grid 16
+# dataset.jsonl (ТЗ, код, масса, аудит, FEM) + fields.npz (occupancy, σ) + stats.json
+```
+
+Выход маховика на 24 сэмплах: 100 % компилируется, 92 % проходит аудит manifold, все валидные детали получают FEM-тензор.
+
+Точность встроенной геометрии проверяется тестами: куб 20 мм даёт массу 20.7 г из аналитических 21.6 г (сетка 40³), толщина стенки восстанавливается как 3.04 мм для плиты 3 мм и 2.17 мм для трубы со стенкой 2 мм.
+
+**Load-path решатель** (`fem/solver.py`) решает $\nabla\cdot(k\nabla\varphi)=0$ по материалу с $\varphi=1$ на площадке нагрузки и $\varphi=0$ на закреплении; поток $|\nabla\varphi|$ нормируется по силе и сечению и калибруется поправкой на изгибающий момент. Это суррогат, воспроизводящий концентрации у отверстий и перемычек — для «настоящих» цифр ставьте CalculiX, адаптер подхватит его автоматически (`fem/calculix.py`).
+
+---
+
+## 5. Бюджет VRAM для RTX 5060 (16 ГБ)
+
+`nexus vram --preset rtx5060` (BF16, 8-bit оптимизатор, 50 % экспертов на CPU-offload, $L=128$, batch 2):
+
+| Компонент | Конфигурация | VRAM |
+| :-- | :-- | --: |
+| Базовое ядро (active) | 1.36B, $d_{latent}=1536$, 24 слоя | 2.54 ГБ |
+| Sparse MoE | 32 эксперта, 7.7B весов, половина на CPU | 6.75 ГБ |
+| FNO-критик FEM | ~32M параметров | 0.06 ГБ |
+| 8-bit оптимизатор | состояние по активным весам | 2.54 ГБ |
+| Активации + chunked prefix | $L=128$, batch 2 | 0.32 ГБ |
+| Состояние TTT | $O(1)$, не зависит от контекста | 0.003 ГБ |
+| **Итого** | | **12.21 ГБ** (запас 3.8 ГБ) |
+
+Пресет `rtx5060-compact` (14 экспертов, ~3.6B суммарных весов MoE, как в таблице ТЗ) — **8.41 ГБ**.
+
+Подробный разбор расхождений с таблицей исходной спецификации: [docs/vram_budget.md](docs/vram_budget.md).
+
+---
+
+## 6. План разработки и текущий статус
+
+| Фаза | Содержание | Статус |
+| :-- | :-- | :-- |
+| **1. Ядро памяти** (нед. 1–2) | TTT-слой + Sliding Attention, тест на длинный контекст | ✅ `layers/`, `nexus needle` |
+| **2. Data Engine & FNO** (нед. 3–4) | Генератор вариаций, headless-рендер, пакетный FEM, обучение FNO | ✅ `scad/`, `fem/`, `nexus train-fno` |
+| **3. Pre-train & Reasoning** (нед. 5–6) | Обучение ядра на коде/AST, включение Latent Workspace | ✅ пайплайн `nexus pretrain` (масштабный прогон — за пользователем и его GPU) |
+| **4. Physics-RL (GRPO)** (нед. 7–8) | RL без критика-сети, физические награды | ✅ `nexus rl` |
+| **5. Новые модальности** | Заморозка ядра, обучение лёгких энкодеров 10–50M | ✅ API `model.freeze_core()` + `model.register_encoder()` |
+
+```python
+model = NexusEngine(NexusConfig.rtx5060())
+model.freeze_core()                      # ядро 1.3B заморожено
+model.register_encoder("audio", AudioSSMEncoder(model.cfg.d_latent))   # учится только энкодер
+```
+
+---
+
+## 7. Структура репозитория
+
+```
+nexus/
+  config.py                 пресеты tiny / rtx5060 / rtx5060-compact
+  bus.py                    Unified Latent Bus + физические инварианты
+  model.py                  сборка трёх уровней, loss, generate, отчёт по параметрам
+  heads.py                  Dual Output Engine
+  demo.py                   сквозная демонстрация
+  cli.py                    единый CLI
+  layers/                   ttt.py · sliding_attention.py · moe.py · block.py · common.py
+  encoders/                 text_ast · audio_visual · scad_brep · spatial · base(SSM/ODE)
+  reasoning/workspace.py    латентный контур + Adaptive Pondering
+  surrogates/fno.py         FNO-3D и FEM-критик
+  geometry/                 csg.py (SDF) · voxel.py (масса, аудит) · brep.py (граф, STL)
+  scad/                     parser.py · generator.py · render.py
+  fem/                      solver.py (load-path) · calculix.py (адаптер ccx)
+  data/                     tokenizer.py · flywheel.py · dataset.py
+  training/                 pretrain.py · train_fno.py · grpo.py · rewards.py
+  eval/                     needle.py (O(1) память) · vram.py (бюджет)
+tests/                      36 тестов: геометрия, ядро, пайплайн
+examples/                   quickstart.py · multimodal.py · scad/*.scad
+docs/                       architecture.md · vram_budget.md · roadmap.md
+```
+
+---
+
+## 8. Ограничения (честно)
+
+* Веса не обучены: репозиторий даёт **архитектуру, данные и контур обучения**, а не готовую модель. На случайной инициализации GRPO ожидаемо получает награду −1 (сгенерированный текст не компилируется) — сначала фаза 3 на реальном объёме данных, затем RL.
+* Встроенный FEM — физически мотивированный суррогат, а не полноценный МКЭ; для сертификационных расчётов подключайте CalculiX.
+* Парсер OpenSCAD покрывает подмножество языка (примитивы, булевы операции, трансформации, переменные, арифметика); `hull`/`minkowski` аппроксимируются содержимым.
+* Энкодеры аудио/видео/3DGS/DVS/биометрии реализованы как рабочие модули уровня 1 с корректной непрерывной динамикой, но обучающих корпусов для них в репозитории нет.
+
+Лицензия: MIT.
