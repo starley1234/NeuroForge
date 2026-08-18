@@ -5,9 +5,15 @@
 Проект работает **на CPU из коробки** и масштабируется до профиля обучения на одной RTX 5060 16 ГБ.
 
 ```bash
+# Linux / macOS
 ./nexus.sh setup        # окружение + самопроверка
 ./nexus.sh quickstart   # данные → токенизатор → обучение → приёмка (~20 с)
 ./nexus.sh serve        # HTTP API на http://localhost:8000
+```
+
+```powershell
+# Windows (PowerShell): nexus.sh не запускается, есть родной скрипт
+.\nexus.ps1 setup ; .\nexus.ps1 quickstart ; .\nexus.ps1 serve
 ```
 
 Пошагово и с разбором проблем — [docs/QUICKSTART.md](docs/QUICKSTART.md).
@@ -361,7 +367,8 @@ nexus/
   eval/                     suite.py (quality gate) · needle.py · vram.py
 tests/                      92 теста: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
-nexus.sh                    единая точка запуска (setup / quickstart / serve / …)
+nexus.sh / nexus.ps1        единая точка запуска (setup / quickstart / serve / …)
+                            для Linux/macOS и Windows, nexus.cmd — обёртка для cmd
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
 docs/                       QUICKSTART.md · DATA_PLAN.md · architecture.md

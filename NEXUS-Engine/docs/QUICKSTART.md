@@ -2,6 +2,8 @@
 
 ## 1. Установка и первый запуск (3 команды)
 
+### Linux / macOS
+
 ```bash
 git clone <repo> && cd NEXUS-Engine
 ./nexus.sh setup          # venv + зависимости + самопроверка (~3 мин)
@@ -10,6 +12,40 @@ git clone <repo> && cd NEXUS-Engine
 ```
 
 Одной кнопкой всё сразу: `./nexus.sh all`.
+
+### Windows (PowerShell)
+
+`nexus.sh` — bash-скрипт, PowerShell его не выполняет (команда просто молча
+завершается). Используйте `nexus.ps1`:
+
+```powershell
+cd C:\github\NeuroForge\NEXUS-Engine
+.\nexus.ps1 setup
+.\nexus.ps1 quickstart
+.\nexus.ps1 serve
+```
+
+Если PowerShell блокирует выполнение скриптов (`... не удается загрузить, так как
+выполнение сценариев отключено`), любой из вариантов:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass   # только на эту сессию
+# или
+powershell -ExecutionPolicy Bypass -File .\nexus.ps1 setup
+# или через обёртку для cmd.exe
+.\nexus.cmd setup
+```
+
+Совсем без скриптов (работает и в conda-окружении):
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -U pip
+.\.venv\Scripts\pip install -e ".[dev]"
+.\.venv\Scripts\python -m nexus.cli doctor
+.\.venv\Scripts\python -m nexus.cli quickstart --scale small
+.\.venv\Scripts\python -m nexus.cli serve --host 0.0.0.0 --port 8000
+```
 
 Масштаб прогона: `NEXUS_SCALE=nano|small|medium|gpu ./nexus.sh quickstart`
 
@@ -72,7 +108,11 @@ docker compose up -d                       # поднять API на :8000
 
 | Симптом | Что делать |
 | :-- | :-- |
-| `окружение не готово` | `./nexus.sh setup` |
+| `окружение не готово` | `./nexus.sh setup` (Windows: `.\nexus.ps1 setup`) |
+| В PowerShell `./nexus.sh` ничего не делает | это bash-скрипт; используйте `.\nexus.ps1` или `.\nexus.cmd` |
+| `выполнение сценариев отключено` | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
+| Windows: кракозябры в консоли | скрипт сам ставит `PYTHONUTF8=1`; вручную: `$env:PYTHONUTF8=1` |
+| Python 3.13+ и torch не ставится | возьмите Python 3.11/3.12 (`py -3.11 -m venv .venv`) |
 | torch ставится очень долго | это ~800 МБ; для GPU-сборки `NEXUS_GPU=1 ./nexus.sh setup` |
 | `quickstart` завершился с «ПРОВАЛЕНО» | норма для `nano`: слишком мало шагов; берите `small` и выше |
 | порт занят | `NEXUS_PORT=8100 ./nexus.sh serve` |

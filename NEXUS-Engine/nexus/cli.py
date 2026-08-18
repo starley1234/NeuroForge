@@ -569,7 +569,17 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _force_utf8_console() -> None:
+    """Windows-консоль по умолчанию не UTF-8: русский текст и рамки ломают вывод."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+
 def main(argv: List[str] | None = None) -> int:
+    _force_utf8_console()
     args = build_parser().parse_args(argv)
     torch.manual_seed(0)
     return args.fn(args)
