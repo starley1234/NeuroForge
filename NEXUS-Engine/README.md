@@ -42,7 +42,7 @@
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"          # или: pip install -r requirements.txt
 
-pytest -q                        # 78 тестов, ~40 с на CPU
+pytest -q                        # 92 теста, ~45 с на CPU
 python -m nexus.cli demo         # сквозная демонстрация всех трёх уровней
 ```
 
@@ -69,6 +69,10 @@ python -m nexus.cli demo         # сквозная демонстрация в�
 nexus doctor                             # диагностика окружения и самопроверка
 nexus quickstart --scale small           # всё сразу: данные → токенизатор → обучение → приёмка
 nexus info --preset rtx5060 --build      # конфиг, число параметров, бюджет VRAM, доступные бэкенды
+nexus datasets list                      # каталог открытых датасетов и лицензии
+nexus gen-math -n 50000                  # верифицированная инженерная математика
+nexus collect --teacher command --command "claude -p" -n 500   # дистилляция с проверкой
+nexus mcp                                # MCP-сервер: движок как инструменты LLM
 nexus train-tokenizer --source dir:./corpus --vocab-size 8192   # свой BPE
 nexus train-lm --source dir:./corpus     # обучение на стандартном датасете
 nexus distill --teacher Qwen/Qwen2.5-0.5B --mode logit   # дистилляция из LLM
@@ -108,7 +112,33 @@ nexus vram --preset rtx5060                             # бюджет VRAM
 `production`. Пример вывода `--scale small`: `val_ppl 942` против случайного
 базлайна `2048`, gate пройден, всё за 20 секунд.
 
-### 3.2 Обучение на стандартном датасете
+### 3.2 Данные: каталог, своя математика, MCP, дистилляция с проверкой
+
+Полный разбор — [docs/DATA_PLAN.md](docs/DATA_PLAN.md).
+
+```bash
+nexus datasets list --commercial-only   # каталог открытых датасетов с лицензиями
+nexus datasets mixes                    # готовые миксы bootstrap / engineering / reasoning
+nexus gen-math -n 50000                 # верифицированная инженерная математика
+nexus mcp --list-tools                  # движок как MCP-инструменты для внешней LLM
+nexus collect --teacher command --command "claude -p" -n 500 --attempts 3
+```
+
+* **Каталог** (`nexus/data/catalog.py`): CAD-Coder (Apache-2.0, 250k), Zero-to-CAD-1M,
+  BenchCAD, thingiverse-openscad, SimJEB/DeepJEB (FEM-метки), OpenMathReasoning,
+  OpenR1-Math — с размерами, лицензиями и честными комментариями.
+* **`mathgen`**: 13 генераторов инженерного счёта (изгиб, затяжка, размерные цепи,
+  устойчивость, посадки…). Ответ считается формулой → метки верны по построению.
+* **MCP-сервер**: `scad_compile`, `scad_analyze`, `fem_analyze`, `score_design`,
+  `propose_variation`, `math_problem`, `record_sample`. Внешняя модель проектирует,
+  наш движок проверяет физикой.
+* **`collect`**: дистилляция с верификацией — неудачные попытки возвращаются учителю
+  как замечания («стенка 0.4 мм», «запас 1.3 при требуемом 2.0»), в корпус попадает
+  только прошедшее порог, вместе с траекторией исправлений.
+* **Микс-источники**: `mix:flywheel:...=0.45,mathgen:20000=0.25,hf:...=0.30` —
+  ленивое чтение и перемешивание по весам, HF-датасеты в streaming.
+
+### 3.3 Обучение на стандартном датасете
 
 ```bash
 nexus train-lm --source builtin:engineering            # офлайн-корпус, работает сразу
@@ -127,7 +157,7 @@ nexus train-lm --source flywheel:artifacts/flywheel --resume latest    # доо�
 последовательности короче, а обучение и инференс дешевле. Токенизатор
 сохраняется **вместе с версией модели** в реестре, так что перепутать их нельзя.
 
-### 3.3 Дистилляция из существующей LLM
+### 3.4 Дистилляция из существующей LLM
 
 ```bash
 nexus distill --teacher Qwen/Qwen2.5-0.5B --mode logit     # KL по логитам + CE
@@ -140,7 +170,7 @@ nexus distill --teacher-nexus core --teacher-ref production --mode logit  # са
 автоматически переводится на словарь учителя. Учитель может быть любым классом
 с `logits()` и `generate_text()`.
 
-### 3.4 Реестр версий — ничего не теряется
+### 3.5 Реестр версий — ничего не теряется
 
 ```
 artifacts/registry/core/
@@ -155,7 +185,7 @@ artifacts/registry/core/
 * `load()` сверяет sha256; `prune` не трогает версии под тегами;
 * откат — переключение тега: `nexus registry rollback --tag production`.
 
-### 3.5 Автотесты дообученной модели (quality gate)
+### 3.6 Автотесты дообученной модели (quality gate)
 
 ```bash
 nexus eval --model-name core --ref latest --baseline production \
@@ -167,7 +197,7 @@ greedy, латентность, постоянство размера TTT-сос
 SCAD-генераций, регрессия к базовой версии. Тег `production` переключается
 **только** при полном прохождении; код возврата пригоден для CI.
 
-### 3.6 HTTP API
+### 3.7 HTTP API
 
 ```bash
 nexus serve --host 0.0.0.0 --port 8000 --ref production
@@ -183,7 +213,7 @@ curl -s -X POST localhost:8000/v1/jobs   -d '{"args":["train-lm","--epochs","1"]
 Защита: `NEXUS_API_KEY=secret` включает `Authorization: Bearer`, плюс
 rate-limit по IP (`--rate-limit`). Ускорение: `--compile` (torch.compile).
 
-### 3.7 Docker
+### 3.8 Docker
 
 ```bash
 docker compose --profile train up train   # данные + первая версия модели
@@ -320,20 +350,23 @@ nexus/
   scad/                     parser.py · generator.py · render.py
   fem/                      hex_fem.py (МКЭ, matrix-free CG) · solver.py · calculix.py
   data/                     tokenizer.py · bpe.py (обучаемый BPE) · corpora.py
-                            flywheel.py · dataset.py
+                            catalog.py (открытые датасеты) · mathgen.py (математика)
+                            collect.py (дистилляция с проверкой) · flywheel.py · dataset.py
+  mcp/                      server.py — MCP stdio-сервер (движок как инструменты)
   quickstart.py             сквозной сценарий «одной командой»
   registry.py               версии моделей, теги, откат, sha256
   training/                 trainer.py (общий цикл) · train_lm.py · distill.py
                             pretrain.py · train_fno.py · grpo.py · rewards.py
   serve/                    service.py (инференс) · app.py (HTTP API) · jobs.py
   eval/                     suite.py (quality gate) · needle.py · vram.py
-tests/                      78 тестов: геометрия, ядро, пайплайн, реестр, обучение,
+tests/                      92 теста: геометрия, ядро, пайплайн, реестр, обучение,
                             API, BPE, МКЭ, quickstart
 nexus.sh                    единая точка запуска (setup / quickstart / serve / …)
 Dockerfile, docker-compose.yml, .github/workflows/ci.yml
 examples/                   quickstart.py · multimodal.py · scad/*.scad
-docs/                       QUICKSTART.md · architecture.md · training.md · api.md
-                            operations.md · vram_budget.md · roadmap.md
+docs/                       QUICKSTART.md · DATA_PLAN.md · architecture.md
+                            training.md · api.md · operations.md · vram_budget.md
+                            roadmap.md
 ```
 
 ---
@@ -360,7 +393,8 @@ docs/                       QUICKSTART.md · architecture.md · training.md · a
 
 | # | Чего нет | Почему важно | Оценка |
 | :-- | :-- | :-- | :-- |
-| 1 | **Обученных весов и большого корпуса** | инфраструктура готова, нужен сбор 10–100 ГБ кода/CAD/документации и прогон на GPU | недели GPU |
+| 1 | **Обученных весов** | данные и конвейер их сбора теперь есть (каталог + mathgen + MCP + collect); нужен прогон на GPU | недели GPU |
+| 1b | **Транслятор CadQuery→OpenSCAD** | открывает Zero-to-CAD (1M), CAD-Coder (250k), BenchCAD (18k) — самый дешёвый способ получить объём | 2–3 дня |
 | 2 | **Ускоренных ядер TTT/MoE** (Triton/CUDA) | чистый PyTorch; фьюзинг чанкового скана и группировка экспертов дадут 3–10× | 1–2 недели |
 | 3 | **Multigrid-предобуславливателя для МКЭ** | сейчас Jacobi+CG: сетки крупнее 48³ считаются секундами, а не миллисекундами | 3–5 дней |
 | 4 | **Marching cubes и STEP/IGES** | воксельный STL груб для производства; нужен OpenCascade для B-Rep | 1 неделя |

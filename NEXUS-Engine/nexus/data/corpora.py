@@ -9,6 +9,8 @@
 `jsonl:PATH#field`           JSONL, поле `field` (по умолчанию `text`)
 `flywheel:PATH`              артефакты маховика (ТЗ + код + сводка FEM)
 `hf:NAME[/CONFIG][:SPLIT]#F` HuggingFace `datasets` (если библиотека доступна)
+`mathgen:N[#seed]`           N верифицированных задач инженерной математики
+`mix:A=0.3,B=0.7`            взвешенная смесь нескольких источников
 ===========================  ==================================================
 """
 from __future__ import annotations
@@ -108,6 +110,56 @@ def _iter_hf(spec: str) -> Iterator[str]:
             yield value
 
 
+def _iter_mathgen(spec: str) -> Iterator[str]:
+    """`mathgen:20000` или `mathgen:20000#seed=7` — верифицированная математика."""
+    from .mathgen import generate
+    seed = 0
+    if "#" in spec:
+        spec, tail = spec.split("#", 1)
+        for part in tail.split(","):
+            if part.startswith("seed="):
+                seed = int(part.split("=", 1)[1])
+    n = int(spec or 1000)
+    for sample in generate(n, seed=seed):
+        yield sample.text
+
+
+def _iter_mix(spec: str, limit: Optional[int] = None) -> Iterator[str]:
+    """`mix:src1=0.3,src2=0.7` — интерливинг источников по весам.
+
+    Веса задают целевую долю документов; источники читаются лениво, при
+    исчерпании одного его вес перераспределяется на остальные.
+    """
+    import random as _random
+
+    parts: List[tuple[str, float]] = []
+    for chunk in _split_top_level(spec):
+        src, _, weight = chunk.rpartition("=")
+        if not src:
+            src, weight = chunk, "1"
+        parts.append((src, float(weight)))
+    total = sum(w for _, w in parts) or 1.0
+    iters = [(iter_texts(src), w / total) for src, w in parts]
+    rng = _random.Random(0)
+    produced = 0
+    while iters:
+        weights = [w for _, w in iters]
+        idx = rng.choices(range(len(iters)), weights=weights, k=1)[0]
+        it, w = iters[idx]
+        try:
+            yield next(it)
+            produced += 1
+            if limit is not None and produced >= limit:
+                return
+        except StopIteration:
+            iters.pop(idx)
+
+
+def _split_top_level(spec: str) -> List[str]:
+    """Разбить `a:b=0.3,c:d#f=0.7` по запятым верхнего уровня."""
+    return [chunk for chunk in spec.split(",") if chunk.strip()]
+
+
 def iter_texts(source: str, limit: Optional[int] = None) -> Iterator[str]:
     """Единая точка входа: спецификация источника → поток текстов."""
     scheme, _, rest = source.partition(":")
@@ -128,6 +180,10 @@ def iter_texts(source: str, limit: Optional[int] = None) -> Iterator[str]:
         stream = _iter_flywheel(rest)
     elif scheme == "hf":
         stream = _iter_hf(rest)
+    elif scheme == "mathgen":
+        stream = _iter_mathgen(rest)
+    elif scheme == "mix":
+        stream = _iter_mix(rest, limit)
     else:
         raise ValueError(f"неизвестный источник данных: {source!r}")
 

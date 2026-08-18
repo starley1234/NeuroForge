@@ -1,6 +1,6 @@
 PY ?= python
 
-.PHONY: help install test demo flywheel pretrain fno rl train-lm distill eval serve registry needle vram
+.PHONY: help install test demo flywheel datasets gen-math collect mcp pretrain fno rl train-lm distill eval serve registry needle vram
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/ —/'
@@ -25,6 +25,18 @@ fno:  ## фаза 2: обучение FNO-суррогата FEM
 
 rl:  ## фаза 4: Physics-RL (GRPO)
 	$(PY) -m nexus.cli rl --steps 10
+
+datasets:  ## каталог открытых датасетов и рекомендованные миксы
+	$(PY) -m nexus.cli datasets list
+
+gen-math:  ## сгенерировать корпус верифицированной инженерной математики
+	$(PY) -m nexus.cli gen-math -n 20000
+
+collect:  ## дистилляция с физической проверкой (офлайн-учитель по умолчанию)
+	$(PY) -m nexus.cli collect --teacher template -n 32 --attempts 3
+
+mcp:  ## MCP-сервер: движок как инструменты для внешней LLM
+	$(PY) -m nexus.cli mcp
 
 train-lm:  ## обучение на стандартном датасете (встроенный корпус)
 	$(PY) -m nexus.cli train-lm --source builtin:engineering --epochs 2

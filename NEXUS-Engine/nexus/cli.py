@@ -175,6 +175,73 @@ def _module_available(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
+def _cmd_datasets(args) -> int:
+    from .data.catalog import CATALOG, MIXES, filter_catalog, mix_source, summary
+    if args.action == "list":
+        rows = filter_catalog(args.task, args.commercial_only, args.max_priority)
+        for e in rows:
+            flag = {True: "коммерч. ок", False: "только research", None: "см. лицензию"}[e.commercial_ok]
+            print(f"[{e.priority}] {e.key:24s} {e.task:9s} {e.size:32s} {e.license:28s} {flag}")
+            print(f"     источник: {e.source}")
+            print(f"     {e.notes}\n")
+    elif args.action == "mixes":
+        for name in MIXES:
+            print(f"{name}: {mix_source(name)}\n")
+    elif args.action == "json":
+        print(json.dumps(summary(), indent=2, ensure_ascii=False))
+    elif args.action == "check":
+        try:
+            import datasets  # noqa: F401
+            print("пакет datasets доступен — источники hf: будут работать")
+        except ImportError:
+            print("нет пакета datasets: pip install datasets (нужен для hf:-источников)")
+        for e in CATALOG:
+            if e.source.startswith(("dir:", "file:")):
+                path = e.source.split(":", 1)[1]
+                print(f"{'есть' if os.path.exists(path) else 'нет '}  {path}  ({e.key})")
+    return 0
+
+
+def _cmd_gen_math(args) -> int:
+    from .data.mathgen import GENERATORS, write_jsonl
+    if args.list_kinds:
+        print("\n".join(sorted(GENERATORS)))
+        return 0
+    stats = write_jsonl(args.n, args.out, args.seed,
+                        args.kinds.split(",") if args.kinds else None)
+    print(json.dumps(stats, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _cmd_collect(args) -> int:
+    from .data.collect import collect, default_tasks, make_designer
+    kwargs = {"seed": args.seed, "device": args.device, "name": args.model_name,
+              "ref": args.ref, "registry_root": args.registry}
+    if args.teacher == "command":
+        if not args.command:
+            print("для --teacher command нужен --command", file=sys.stderr)
+            return 2
+        kwargs["command"] = args.command.split()
+    if args.teacher == "hf":
+        kwargs["model_id"] = args.hf_model
+    designer = make_designer(args.teacher, **kwargs)
+    stats = collect(designer, default_tasks(args.n, args.seed), args.n, args.attempts,
+                    args.threshold, args.out, seed=args.seed, grid=args.grid)
+    print(json.dumps(stats.to_dict(), indent=2, ensure_ascii=False))
+    return 0
+
+
+def _cmd_mcp(args) -> int:
+    from .mcp.server import MCPServer
+    server = MCPServer(args.workdir)
+    if args.list_tools:
+        print(json.dumps([t.spec() for t in server.tools.values()], indent=2,
+                         ensure_ascii=False))
+        return 0
+    server.serve_stdio()
+    return 0
+
+
 def _cmd_demo(args) -> int:
     from .demo import run_demo
     run_demo(out_dir=args.out, n_samples=args.n)
@@ -455,6 +522,45 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--max-chars", type=int, default=2_000_000)
     p.set_defaults(fn=_cmd_tokenizer)
+
+    p = sub.add_parser("datasets", help="каталог открытых датасетов и готовые миксы")
+    p.add_argument("action", choices=["list", "mixes", "json", "check"], nargs="?",
+                   default="list")
+    p.add_argument("--task", default=None,
+                   choices=["cad-code", "cad-brep", "sim", "math", "code", "text"])
+    p.add_argument("--commercial-only", action="store_true")
+    p.add_argument("--max-priority", type=int, default=3)
+    p.set_defaults(fn=_cmd_datasets)
+
+    p = sub.add_parser("gen-math", help="сгенерировать корпус инженерной математики")
+    p.add_argument("-n", type=int, default=10000)
+    p.add_argument("--out", default="artifacts/math/engineering_math.jsonl")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--kinds", default=None, help="через запятую; см. --list-kinds")
+    p.add_argument("--list-kinds", action="store_true")
+    p.set_defaults(fn=_cmd_gen_math)
+
+    p = sub.add_parser("collect", help="сбор данных дистилляцией с физической проверкой")
+    p.add_argument("--teacher", choices=["template", "command", "hf", "nexus"],
+                   default="template")
+    p.add_argument("--command", default=None, help="CLI учителя, напр. 'claude -p'")
+    p.add_argument("--hf-model", default=None)
+    p.add_argument("-n", type=int, default=16, help="сколько ТЗ обработать")
+    p.add_argument("--attempts", type=int, default=3, help="попыток на задачу с фидбеком")
+    p.add_argument("--threshold", type=float, default=3.5, help="порог награды для приёма")
+    p.add_argument("--grid", type=int, default=20)
+    p.add_argument("--out", default="artifacts/collected/dataset.jsonl")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--model-name", default="core")
+    p.add_argument("--ref", default="production")
+    p.add_argument("--registry", default="artifacts/registry")
+    p.add_argument("--device", default="cpu")
+    p.set_defaults(fn=_cmd_collect)
+
+    p = sub.add_parser("mcp", help="MCP-сервер: движок как инструменты для внешней LLM")
+    p.add_argument("--workdir", default="artifacts/mcp")
+    p.add_argument("--list-tools", action="store_true")
+    p.set_defaults(fn=_cmd_mcp)
 
     p = sub.add_parser("demo", help="сквозная демонстрация всех трёх уровней")
     p.add_argument("--out", default="artifacts/demo")
