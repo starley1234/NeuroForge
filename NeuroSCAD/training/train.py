@@ -9,7 +9,7 @@ import argparse
 import json
 from pathlib import Path
 
-SYSTEM = "Convert the engineering request to one canonical NeuroSCAD CSG-IR v0.1 JSON object. Output JSON only."
+DEFAULT_SYSTEM = "Convert the engineering request to one canonical NeuroSCAD CSG-IR v0.1 JSON object. Output JSON only."
 
 
 def load_config(path: Path) -> dict:
@@ -49,15 +49,31 @@ def main() -> None:
     files = {"train": cfg["train_file"], "validation": cfg["validation_file"]}
     dataset = load_dataset("json", data_files=files)
     max_length = int(cfg.get("max_length", 4096))
+    system_prompt = str(cfg.get("system_prompt", DEFAULT_SYSTEM))
+
+    def serialize(row: dict) -> tuple[str, str]:
+        if tokenizer.chat_template:
+            prefix = tokenizer.apply_chat_template(
+                [{"role": "system", "content": system_prompt}, {"role": "user", "content": row["prompt"]}],
+                tokenize=False, add_generation_prompt=True,
+            )
+        else:
+            prefix = f"System: {system_prompt}\nUser: {row['prompt']}\nAssistant: "
+        raw_target = row["target"]
+        serialized = raw_target if isinstance(raw_target, str) else json.dumps(raw_target, ensure_ascii=False, separators=(",", ":"))
+        return prefix, serialized + tokenizer.eos_token
+
+    # Never train on silently truncated CAD programs: an omitted closing block can
+    # teach exactly the failure mode the execution gate is meant to eliminate.
+    dataset = dataset.filter(lambda row: len(tokenizer("".join(serialize(row)), add_special_tokens=True)["input_ids"]) <= max_length,
+                             desc="Dropping overlength examples")
 
     def tokenize(row: dict) -> dict:
-        prefix = f"System: {SYSTEM}\nUser: {row['prompt']}\nAssistant: "
-        target = json.dumps(row["target"], ensure_ascii=False, separators=(",", ":")) + tokenizer.eos_token
+        prefix, target = serialize(row)
         prefix_ids = tokenizer(prefix, add_special_tokens=True, truncation=True, max_length=max_length)["input_ids"]
         encoded = tokenizer(prefix + target, add_special_tokens=True, truncation=True, padding="max_length", max_length=max_length)
-        labels = list(encoded["input_ids"])
+        labels = [token if mask else -100 for token, mask in zip(encoded["input_ids"], encoded["attention_mask"])]
         labels[:len(prefix_ids)] = [-100] * min(len(prefix_ids), max_length)
-        labels = [(-100 if token == tokenizer.pad_token_id else token) for token in labels]
         encoded["labels"] = labels
         return encoded
 
@@ -75,6 +91,10 @@ def main() -> None:
     )
     trainer = Trainer(model=model, args=training_args, train_dataset=tokenized["train"], eval_dataset=tokenized["validation"])
     trainer.train(); trainer.save_model(cfg["output_dir"]); tokenizer.save_pretrained(cfg["output_dir"])
-    Path(cfg["output_dir"], "training_manifest.json").write_text(json.dumps({"config": cfg, "base_model": cfg["model"]}, indent=2) + "\n")
+    Path(cfg["output_dir"], "training_manifest.json").write_text(json.dumps({
+        "config": cfg, "base_model": cfg["model"],
+        "train_examples_after_length_filter": len(tokenized["train"]),
+        "validation_examples_after_length_filter": len(tokenized["validation"]),
+    }, indent=2) + "\n")
 
 if __name__ == "__main__": main()

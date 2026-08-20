@@ -1,6 +1,6 @@
 # NeuroSCAD Model Architecture v2 — Hierarchical CAD Flow
 
-Status: design proposal, not trained. This document supersedes the original flat `class token + R9` CSG-Former idea as the target architecture. The existing Qwen LoRA script remains a baseline.
+Status: long-term research proposal, not trained. It supersedes the original flat `class token + R9` CSG-Former idea, but is **not the next implementation priority**. Given the available 500 high-quality OpenSCAD scripts, the near-term production path is [direct code-model distillation](LOW_COST_DISTILLATION.md). The flow architecture should be revisited only after direct code generation has a measured limitation and a much larger validated corpus exists.
 
 ## Decision
 

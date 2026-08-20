@@ -4,7 +4,7 @@
 
 NeuroSCAD преобразует техническое задание в параметрическую модель, но не доверяет генератору: CSG-IR проверяется строгой грамматикой, OpenSCAD создаётся детерминированным компилятором, а уровень фактической проверки явно указывается в отчёте.
 
-> Версия `0.3.0`: production-oriented foundation. Сейчас работают три семейства: хомуты, монтажные пластины и втулки. Обученных нейросетевых весов пока нет: созданы CAD pipeline, эталонные генераторы и training pipeline. Подробно: [что является моделью](docs/MODEL.md).
+> Версия `0.4.0`: production-oriented foundation. Сейчас работают три семейства: хомуты, монтажные пластины и втулки. Обученных нейросетевых весов пока нет: созданы CAD pipeline, эталонные генераторы и training pipeline. Подробно: [что является моделью](docs/MODEL.md).
 
 ## Возможности
 
@@ -17,6 +17,9 @@ NeuroSCAD преобразует техническое задание в пар
 - browser UI, FastAPI/OpenAPI, request IDs и security headers;
 - non-root/read-only Docker deployment;
 - воспроизводимый synthetic data engine, LoRA training profile и promotion gate;
+- ingestion 500+ owner OpenSCAD scripts: audit, compile, STL metrics и 8 renders;
+- resumable teacher annotation и сборка distillation/edit датасета;
+- исполняемая оценка предсказанного OpenSCAD;
 - реестр внешних датасетов с лицензионной политикой.
 
 ## Запуск одной командой
@@ -49,16 +52,26 @@ python3 -m neuroscad.cli validate examples/camera_bracket.json --render
 python3 -m neuroscad.cli validate examples/camera_bracket.json --sweep
 ```
 
-## Обучение
+## Дистилляция на собственных OpenSCAD
 
 ```bash
-python3 -m training.prepare --output data/processed --samples 10000 --seed 42
+# 1. Проверить, скомпилировать и отрендерить исходные скрипты
+python3 -m training.ingest_openscad --input /path/to/scad --output data/openscad-corpus --license owned
+
+# 2. Получить grounded описания и планы от мультимодального teacher
+export TEACHER_API_KEY=...
+python3 -m training.annotate_teacher --corpus data/openscad-corpus \
+  --output data/openscad-corpus/annotations.jsonl \
+  --endpoint https://provider.example/v1/chat/completions --model teacher-model
+
+# 3. Собрать SFT train/validation/test и обучить 3B LoRA
+python3 -m training.build_distillation --corpus data/openscad-corpus \
+  --annotations data/openscad-corpus/annotations.jsonl --output data/distilled
 pip install -e '.[training]'
-python3 -m training.train --config training/config.example.json
-python3 -m training.evaluate outputs/predictions.jsonl
+python3 -m training.train --config training/openscad_config.example.json
 ```
 
-Модель не активируется после обучения автоматически. Сначала она должна пройти IR, geometry, leakage и regression gates. Подробнее: [TRAINING.md](docs/TRAINING.md).
+Модель не активируется автоматически. Подробный недорогой план: [LOW_COST_DISTILLATION.md](docs/LOW_COST_DISTILLATION.md). Синтетический CSG-IR pipeline остаётся доступен через `training.prepare`.
 
 ## Проверка проекта
 
@@ -95,6 +108,7 @@ Dockerfile / compose        ограниченное runtime-окружение
 ## Документация
 
 - [Что мы называем моделью и чего реально ждать](docs/MODEL.md)
+- [Недорогая дистилляция на собственных OpenSCAD](docs/LOW_COST_DISTILLATION.md)
 - [Целевая coarse-to-fine flow-архитектура](docs/MODEL_ARCHITECTURE_V2.md)
 - [Архитектурные решения](docs/ARCHITECTURE.md)
 - [Выбор датасетов и лицензии](docs/DATASETS.md)

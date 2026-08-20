@@ -3,8 +3,16 @@
   "policy": "Only datasets approved for the intended deployment may enter production training.",
   "datasets": [
     {
-      "id": "neuroscad-synthetic-v1",
-      "use": "primary CSG-IR supervised training and CI smoke tests",
+      "id": "owner-openscad-500",
+      "use": "primary high-quality OpenSCAD distillation, RAG, golden benchmark",
+      "license": "owner-supplied; record per-file rights",
+      "commercial_training": "approved_if_owned",
+      "adapter": "training.ingest_openscad",
+      "notes": "Split by source hash before teacher paraphrases and edits."
+    },
+    {
+      "id": "neuroscad-synthetic-v2",
+      "use": "pipeline tests and CSG-IR baseline",
       "license": "Apache-2.0",
       "commercial_training": "approved",
       "adapter": "training.prepare"

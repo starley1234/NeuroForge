@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY neuroscad ./neuroscad
+COPY training ./training
 COPY schema ./schema
 COPY requirements-prod.lock ./
 RUN pip install --no-cache-dir -r requirements-prod.lock && pip install --no-cache-dir --no-deps .

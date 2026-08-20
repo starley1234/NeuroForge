@@ -7,5 +7,9 @@ __pycache__
 build
 dist
 data/processed
+data/openscad-corpus
+data/distilled
+predictions*.jsonl
+evaluation-details*.jsonl
 outputs
 models

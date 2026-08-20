@@ -4,8 +4,9 @@
 
 | Dataset | Масштаб | Лицензия/риск | Решение |
 |---|---:|---|---|
-| NeuroSCAD Synthetic v1 | управляемый | Apache-2.0 | основной SFT сейчас |
-| Zero-to-CAD 1M | 1M | Apache-2.0 | приоритетный кандидат для operation pretraining |
+| Owner OpenSCAD corpus | ~500 | права владельца, фиксировать по файлам | основной источник distillation/RAG и golden benchmark |
+| NeuroSCAD Synthetic v2 | управляемый | Apache-2.0 | тестирование CSG-IR pipeline |
+| Zero-to-CAD 1M | 1M | Apache-2.0 | выборочный источник разнообразия после проверки pipeline |
 | CADFS | ~100K, 90.5 GB | CC-BY-4.0 | кандидат для multimodal после FeatureScript adapter |
 | CADEvolve | ~1.3M | Apache-2.0 | кандидат для CadQuery diversity |
 | CAD-Coder | 250K | заявлен Apache-2.0, upstream provenance требует проверки | legal review |

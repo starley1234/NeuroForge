@@ -1,4 +1,4 @@
-.PHONY: test run install docker-up docker-down synthetic-data
+.PHONY: test run install docker-up docker-down synthetic-data ingest-openscad
 
 install:
 	python3 -m pip install -e '.[api,validation,dev]'
@@ -18,3 +18,7 @@ docker-down:
 
 synthetic-data:
 	python3 -m training.prepare --output data/processed --samples 10000 --seed 42
+
+ingest-openscad:
+	@test -n "$(SCAD_INPUT)" || (echo "Set SCAD_INPUT=/path/to/scripts" && exit 2)
+	python3 -m training.ingest_openscad --input "$(SCAD_INPUT)" --output data/openscad-corpus --license "$${SCAD_LICENSE:-owned}"

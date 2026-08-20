@@ -9,3 +9,7 @@ data/processed/
 outputs/
 models/
 *.stl
+data/openscad-corpus/
+data/distilled/
+predictions*.jsonl
+evaluation-details*.jsonl
