@@ -2,13 +2,17 @@
 
 ## Рекомендуемая стратегия
 
-Не начинать с 180M transformer «с нуля». Для RTX 5060 Ti 16 GB практичнее:
+Текущий `training/train.py` — простой Qwen LoRA text-to-IR baseline, а не окончательная архитектура. Целевая модель описана в [MODEL_ARCHITECTURE_V2.md](MODEL_ARCHITECTURE_V2.md): pretrained semantic encoder + hierarchical CAD autoencoder + categorical topology diffusion + continuous rectified flow.
+
+Для RTX 5060 Ti 16 GB практичнее:
 
 1. Доказать pipeline на собственном синтетическом CSG-IR.
-2. Fine-tune небольшую code model 1.5B через LoRA.
-3. Применить grammar-constrained decoding и статический validator.
-4. Добавлять внешние данные только через parser → IR → render → license gate.
-5. Продвигать checkpoint только после family-held-out и geometry regression тестов.
+2. Обучить и измерить простой code-model LoRA baseline.
+3. Отдельно обучить CAD autoencoder и проверить точную реконструкцию.
+4. Затем обучать coarse-to-fine topology diffusion и geometry flow.
+5. Применить grammar-constrained decoding и статический validator.
+6. Добавлять внешние данные только через parser → IR → render → license gate.
+7. Продвигать checkpoint только после family-held-out и geometry regression тестов.
 
 ## Подготовка собственных данных
 

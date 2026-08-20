@@ -1,0 +1,54 @@
+{
+  "architecture": "hierarchical-cad-flow-v2",
+  "status": "design-not-trained",
+  "semantic_encoder": {
+    "model": "Qwen/Qwen3-0.6B",
+    "frozen": true,
+    "projector_dim": 512,
+    "use_lora_after_alignment": false
+  },
+  "cad_autoencoder": {
+    "d_model": 512,
+    "encoder_layers": 8,
+    "decoder_layers": 10,
+    "heads": 8,
+    "latent_slots": 64,
+    "levels": ["envelope", "topology", "parameters", "details"],
+    "rvq_codebook_size": 1024,
+    "rvq_codebooks": 4
+  },
+  "topology_diffusion": {
+    "kind": "masked-categorical",
+    "layers": 10,
+    "d_model": 512,
+    "heads": 8,
+    "training_steps": 64,
+    "inference_steps": 16,
+    "grammar_mask": true
+  },
+  "geometry_flow": {
+    "kind": "rectified-flow-transformer",
+    "layers": 12,
+    "d_model": 512,
+    "heads": 8,
+    "ffn_dim": 2048,
+    "training_steps": 1000,
+    "inference_steps": 24,
+    "condition_dropout": 0.1
+  },
+  "detail_refiner": {
+    "layers": 6,
+    "lock_envelope_and_interfaces": true
+  },
+  "limits": {
+    "max_ir_nodes": 256,
+    "max_parameters": 128,
+    "target_gpu_vram_gb": 16
+  },
+  "promotion_gates": {
+    "reconstruction_ir_valid_rate": 0.995,
+    "reconstruction_compile_rate": 0.98,
+    "generated_ir_valid_rate": 0.99,
+    "generated_compile_rate": 0.95
+  }
+}

@@ -45,8 +45,9 @@
 - DeepCAD/Text2CAD и Fusion 360 Gallery с проверкой лицензий;
 - семейства реальных деталей вместо равномерно случайных деревьев;
 - topology/geometry dedup и split по семействам против leakage;
-- baseline retrieval + parameter fitting, затем decoder с grammar mask;
-- visual feedback после SFT, не вместо точных метрик.
+- baseline retrieval + parameter fitting и Qwen LoRA;
+- целевая [Hierarchical CAD Flow v2](MODEL_ARCHITECTURE_V2.md): categorical topology diffusion + continuous rectified flow;
+- visual feedback после representation/SFT обучения, не вместо точных метрик.
 
 ### M3 — инженерная проверка
 - minimum wall, clearance, disconnected shells, overhang/bridging;

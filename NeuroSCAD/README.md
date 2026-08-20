@@ -95,6 +95,7 @@ Dockerfile / compose        ограниченное runtime-окружение
 ## Документация
 
 - [Что мы называем моделью и чего реально ждать](docs/MODEL.md)
+- [Целевая coarse-to-fine flow-архитектура](docs/MODEL_ARCHITECTURE_V2.md)
 - [Архитектурные решения](docs/ARCHITECTURE.md)
 - [Выбор датасетов и лицензии](docs/DATASETS.md)
 - [Обучение и promotion](docs/TRAINING.md)
