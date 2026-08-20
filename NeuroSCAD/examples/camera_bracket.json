@@ -1,0 +1,347 @@
+{
+  "version": "0.1",
+  "root": "result",
+  "parameters": [
+    {
+      "name": "tube_d",
+      "default": 25.0,
+      "minimum": 8,
+      "maximum": 80,
+      "step": 0.5,
+      "unit": "mm",
+      "label": "Диаметр трубы",
+      "group": "Dimensions"
+    },
+    {
+      "name": "wall",
+      "default": 4,
+      "minimum": 2,
+      "maximum": 12,
+      "step": 0.5,
+      "unit": "mm",
+      "label": "Толщина стенки",
+      "group": "Dimensions"
+    },
+    {
+      "name": "clamp_width",
+      "default": 20,
+      "minimum": 8,
+      "maximum": 50,
+      "step": 1,
+      "unit": "mm",
+      "label": "Ширина хомута",
+      "group": "Dimensions"
+    },
+    {
+      "name": "split_gap",
+      "default": 3,
+      "minimum": 1,
+      "maximum": 10,
+      "step": 0.5,
+      "unit": "mm",
+      "label": "Зазор разреза",
+      "group": "Dimensions"
+    },
+    {
+      "name": "screw_d",
+      "default": 4.4,
+      "minimum": 2,
+      "maximum": 12,
+      "step": 0.1,
+      "unit": "mm",
+      "label": "Отверстие под винт",
+      "group": "Dimensions"
+    },
+    {
+      "name": "lug_length",
+      "default": 18,
+      "minimum": 10,
+      "maximum": 40,
+      "step": 1,
+      "unit": "mm",
+      "label": "Длина проушины",
+      "group": "Dimensions"
+    },
+    {
+      "name": "lug_height",
+      "default": 12,
+      "minimum": 8,
+      "maximum": 30,
+      "step": 1,
+      "unit": "mm",
+      "label": "Высота проушины",
+      "group": "Dimensions"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "result",
+      "op": "difference",
+      "children": [
+        "body",
+        "bore",
+        "split",
+        "bolt_hole"
+      ]
+    },
+    {
+      "id": "body",
+      "op": "union",
+      "children": [
+        "ring",
+        "lug"
+      ]
+    },
+    {
+      "id": "ring",
+      "op": "cylinder",
+      "args": {
+        "d": {
+          "op": "add",
+          "args": [
+            {
+              "param": "tube_d"
+            },
+            {
+              "op": "mul",
+              "args": [
+                2,
+                {
+                  "param": "wall"
+                }
+              ]
+            }
+          ]
+        },
+        "h": {
+          "param": "clamp_width"
+        }
+      }
+    },
+    {
+      "id": "lug",
+      "op": "box",
+      "args": {
+        "size": [
+          {
+            "param": "lug_length"
+          },
+          {
+            "param": "lug_height"
+          },
+          {
+            "param": "clamp_width"
+          }
+        ]
+      },
+      "translate": [
+        {
+          "op": "add",
+          "args": [
+            {
+              "op": "div",
+              "args": [
+                {
+                  "op": "add",
+                  "args": [
+                    {
+                      "param": "tube_d"
+                    },
+                    {
+                      "op": "mul",
+                      "args": [
+                        2,
+                        {
+                          "param": "wall"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                2
+              ]
+            },
+            {
+              "op": "div",
+              "args": [
+                {
+                  "param": "lug_length"
+                },
+                2
+              ]
+            },
+            -1
+          ]
+        },
+        0,
+        0
+      ]
+    },
+    {
+      "id": "bore",
+      "op": "cylinder",
+      "args": {
+        "d": {
+          "param": "tube_d"
+        },
+        "h": {
+          "op": "add",
+          "args": [
+            {
+              "param": "clamp_width"
+            },
+            2
+          ]
+        }
+      }
+    },
+    {
+      "id": "split",
+      "op": "box",
+      "args": {
+        "size": [
+          {
+            "op": "add",
+            "args": [
+              {
+                "param": "wall"
+              },
+              {
+                "param": "lug_length"
+              },
+              2
+            ]
+          },
+          {
+            "param": "split_gap"
+          },
+          {
+            "op": "add",
+            "args": [
+              {
+                "param": "clamp_width"
+              },
+              2
+            ]
+          }
+        ]
+      },
+      "translate": [
+        {
+          "op": "add",
+          "args": [
+            {
+              "op": "div",
+              "args": [
+                {
+                  "op": "add",
+                  "args": [
+                    {
+                      "param": "tube_d"
+                    },
+                    {
+                      "op": "mul",
+                      "args": [
+                        2,
+                        {
+                          "param": "wall"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                2
+              ]
+            },
+            {
+              "op": "div",
+              "args": [
+                {
+                  "param": "lug_length"
+                },
+                2
+              ]
+            }
+          ]
+        },
+        0,
+        0
+      ],
+      "role": "clearance"
+    },
+    {
+      "id": "bolt_hole",
+      "op": "cylinder",
+      "args": {
+        "d": {
+          "param": "screw_d"
+        },
+        "h": {
+          "op": "add",
+          "args": [
+            {
+              "param": "lug_height"
+            },
+            2
+          ]
+        }
+      },
+      "translate": [
+        {
+          "op": "add",
+          "args": [
+            {
+              "op": "div",
+              "args": [
+                {
+                  "op": "add",
+                  "args": [
+                    {
+                      "param": "tube_d"
+                    },
+                    {
+                      "op": "mul",
+                      "args": [
+                        2,
+                        {
+                          "param": "wall"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                2
+              ]
+            },
+            {
+              "op": "div",
+              "args": [
+                {
+                  "param": "lug_length"
+                },
+                2
+              ]
+            }
+          ]
+        },
+        0,
+        0
+      ],
+      "rotate": [
+        90,
+        0,
+        0
+      ],
+      "role": "fastener_clearance"
+    }
+  ],
+  "metadata": {
+    "name": "Camera pipe split clamp",
+    "source_prompt": "Кронштейн для камеры на трубу 25 мм с фиксацией винтом М4",
+    "assumptions": [
+      "FDM prototype",
+      "diametral screw clearance +0.4 mm",
+      "load/FEM not evaluated"
+    ]
+  }
+}
