@@ -21,7 +21,7 @@ from .ir import IRError, Program
 from .templates import generate
 from .validator import render_stl, validate_parameter_sweep, validate_program
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 app = FastAPI(
     title="NeuroSCAD", version=VERSION,
     docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None,

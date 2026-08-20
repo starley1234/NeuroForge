@@ -9,6 +9,7 @@ data/processed/
 outputs/
 models/
 *.stl
+data/sql-extracted/
 data/openscad-corpus/
 data/distilled/
 predictions*.jsonl

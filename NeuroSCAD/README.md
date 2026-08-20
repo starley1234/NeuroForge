@@ -4,7 +4,7 @@
 
 NeuroSCAD преобразует техническое задание в параметрическую модель, но не доверяет генератору: CSG-IR проверяется строгой грамматикой, OpenSCAD создаётся детерминированным компилятором, а уровень фактической проверки явно указывается в отчёте.
 
-> Версия `0.4.0`: production-oriented foundation. Сейчас работают три семейства: хомуты, монтажные пластины и втулки. Обученных нейросетевых весов пока нет: созданы CAD pipeline, эталонные генераторы и training pipeline. Подробно: [что является моделью](docs/MODEL.md).
+> Версия `0.4.1`: production-oriented foundation. Сейчас работают три семейства: хомуты, монтажные пластины и втулки. Обученных нейросетевых весов пока нет: созданы CAD pipeline, эталонные генераторы и training pipeline. Подробно: [что является моделью](docs/MODEL.md).
 
 ## Возможности
 
@@ -55,8 +55,13 @@ python3 -m neuroscad.cli validate examples/camera_bracket.json --sweep
 ## Дистилляция на собственных OpenSCAD
 
 ```bash
+# 0. Если источник — phpMyAdmin SQL dump, безопасно извлечь код без запуска SQL
+python3 -m training.extract_sql_corpus --input data/stl_items.sql \
+  --output data/sql-extracted --license owned
+
 # 1. Проверить, скомпилировать и отрендерить исходные скрипты
-python3 -m training.ingest_openscad --input /path/to/scad --output data/openscad-corpus --license owned
+python3 -m training.ingest_openscad --input data/sql-extracted \
+  --output data/openscad-corpus --license owned
 
 # 2. Получить grounded описания и планы от мультимодального teacher
 export TEACHER_API_KEY=...
@@ -109,6 +114,7 @@ Dockerfile / compose        ограниченное runtime-окружение
 
 - [Что мы называем моделью и чего реально ждать](docs/MODEL.md)
 - [Недорогая дистилляция на собственных OpenSCAD](docs/LOW_COST_DISTILLATION.md)
+- [Разбор предоставленного SQL-примера](docs/SAMPLE_SQL_REPORT.md)
 - [Целевая coarse-to-fine flow-архитектура](docs/MODEL_ARCHITECTURE_V2.md)
 - [Архитектурные решения](docs/ARCHITECTURE.md)
 - [Выбор датасетов и лицензии](docs/DATASETS.md)

@@ -2,7 +2,7 @@ services:
   neuroscad:
     build:
       context: .
-    image: neuroscad:0.4.0
+    image: neuroscad:0.4.1
     restart: unless-stopped
     ports:
       - "${NEUROSCAD_PORT:-8000}:8000"

@@ -7,7 +7,9 @@ from neuroscad.openscad_runner import audit_source, extract_customizer_parameter
 from training.annotate_teacher import parse_annotation
 from training.build_distillation import build, replace_default
 from training.evaluate_openscad import extract_code
+from training.extract_sql_corpus import extract as extract_sql, iter_items
 from training.ingest_openscad import ingest
+from training.profile_openscad import profile
 from training.retrieve_examples import retrieve
 
 CODE = """// plate width
@@ -32,6 +34,7 @@ class OpenSCADDatasetTests(unittest.TestCase):
             self.assertEqual(manifest["counts"]["duplicate_source"], 1)
             record = json.loads((Path(output_tmp) / "records.jsonl").read_text())
             self.assertEqual(record["prompt"], "Пластина 40 на 20")
+            self.assertEqual(profile(Path(output_tmp))["models"], 1)
 
     def test_teacher_json_and_distillation_build(self):
         annotation = {"description": "Пластина", "family": "plate", "requirements": {"width": 40},
@@ -48,6 +51,16 @@ class OpenSCADDatasetTests(unittest.TestCase):
             rows = [json.loads(line) for line in (Path(output_tmp) / "test.jsonl").read_text().splitlines()]
             self.assertTrue(all(row["source_id"] == "abc" for row in rows))
             self.assertTrue(any(row["task"] == "edit" and "width = 20" in row["target"] for row in rows))
+
+    def test_sql_extraction_decodes_code_and_omits_identifiers(self):
+        sql = "INSERT INTO `stl_items` (`stl_item_id`,`stl_item_status`,`stl_item_code_basis`,`stl_item_code`,`user_id`) VALUES (7,'в работе','Кронштейн','a = 2;\\n// it\\\'s valid',99);"
+        item = next(iter_items(sql)); self.assertIn("\n", item["stl_item_code"])
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as out:
+            source = Path(tmp) / "items.sql"; source.write_text(sql)
+            self.assertEqual(extract_sql(source, Path(out), "owned")["extracted"], 1)
+            sidecar = json.loads((Path(out) / "stl_item_7.json").read_text())
+            self.assertNotIn("user_id", json.dumps(sidecar))
+            self.assertEqual(sidecar["prompt"], "Кронштейн")
 
     def test_retrieval_prefers_matching_owner_example(self):
         with tempfile.TemporaryDirectory() as tmp:

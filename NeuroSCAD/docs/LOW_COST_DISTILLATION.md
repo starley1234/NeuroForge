@@ -53,9 +53,22 @@ Diversity matters more than raw count. We must report family, operation and comp
 
 ## Pipeline now implemented
 
-### 1. Corpus audit and rendering
+### 1. Extract SQL dump when needed
 
-Put scripts in one directory. Optional sidecar with the same stem:
+For the supplied phpMyAdmin `stl_items` dump, do **not** restore the database. Parse it as inert text:
+
+```bash
+python3 -m training.extract_sql_corpus \
+  --input data/stl_items.sql \
+  --output data/sql-extracted \
+  --license owned
+```
+
+The extractor writes one `.scad` and one sidecar `.json` per item. It intentionally omits `user_id`, `guest_id` and `answer_id` from training metadata.
+
+### 2. Corpus audit and rendering
+
+Put scripts in one directory, or use `data/sql-extracted` from the previous step. Optional sidecar with the same stem:
 
 ```json
 {
@@ -88,13 +101,13 @@ python3 -m training.ingest_openscad \
 Recommended isolated container invocation (the host output directory must be writable by UID 10001):
 
 ```bash
-docker build -t neuroscad:0.4.0 .
+docker build -t neuroscad:0.4.1 .
 mkdir -p data/openscad-corpus
 sudo chown 10001:10001 data/openscad-corpus
 docker run --rm --network none --read-only --tmpfs /tmp:size=1g \
   -v /path/to/500-scripts:/input:ro \
   -v "$PWD/data/openscad-corpus:/output" \
-  neuroscad:0.4.0 python -m training.ingest_openscad \
+  neuroscad:0.4.1 python -m training.ingest_openscad \
   --input /input --output /output --license owned
 ```
 
@@ -112,9 +125,17 @@ data/openscad-corpus/
 └── renders/<source-id>/{iso_front,front,right,...}.png
 ```
 
+Profile operation coverage before spending teacher tokens:
+
+```bash
+python3 -m training.profile_openscad \
+  --corpus data/openscad-corpus \
+  --output data/openscad-corpus/profile.json
+```
+
 The train/validation/test split is assigned **before** paraphrases and edits are created. Put variants of one construction into the same sidecar `group_id`; otherwise the source hash is used.
 
-### 2. Cheap retrieval baseline
+### 3. Cheap retrieval baseline
 
 After adding original prompts or teacher annotations, retrieve similar trusted scripts without a vector database:
 
@@ -128,7 +149,7 @@ python3 -m training.retrieve_examples \
 
 The dependency-free TF-IDF baseline is deliberately simple. Measure it before paying for an embedding service; Zero-to-CAD also found lightweight documentation retrieval sufficient in its synthesis loop.
 
-### 3. Teacher annotation
+### 4. Teacher annotation
 
 Use any OpenAI-compatible multimodal teacher. Credentials stay in an environment variable and are never written to the dataset:
 
@@ -152,7 +173,7 @@ Each request contains code, parameters and up to four rendered views. The teache
 
 The script is resumable. Start with `--limit 10`, inspect annotations manually, then process the corpus.
 
-### 4. Build distillation data
+### 5. Build distillation data
 
 ```bash
 python3 -m training.build_distillation \
@@ -173,7 +194,7 @@ This is a concise modeling plan, not hidden chain-of-thought. All paraphrases an
 
 Expected first corpus size depends on annotation quality, but 500 models × roughly 5–8 grounded prompts plus edits gives approximately 3k–5k high-quality rows. That is suitable for LoRA adaptation, not foundation pretraining.
 
-### 5. Train the student
+### 6. Train the student
 
 ```bash
 pip install -e '.[training]'
@@ -182,7 +203,7 @@ python3 -m training.train --config training/openscad_config.example.json
 
 Initial student: `Qwen2.5-Coder-3B-Instruct`, LoRA rank 32, context 3072. It is a cost/VRAM baseline, not a sacred choice. Compare 1.5B, 3B and 7B under the same held-out test.
 
-### 6. Evaluate executable output
+### 7. Evaluate executable output
 
 Run inference on held-out prompts and save JSONL rows with `prediction`. Then:
 
