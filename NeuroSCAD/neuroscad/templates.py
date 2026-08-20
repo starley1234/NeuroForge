@@ -13,8 +13,12 @@ def _find(prompt: str, patterns: list[str], default: float) -> float:
 
 def camera_pipe_bracket(prompt: str) -> Program:
     """Generate an adjustable split clamp with an M-size bolt lug."""
-    tube = _find(prompt, [r"(?:труб\w*|pipe|tube)(?:\s+\w+){0,2}?\s*(?:диаметр\w*|[ø⌀d])?\s*(\d+(?:[.,]\d+)?)", r"[ø⌀]\s*(\d+(?:[.,]\d+)?)"], 25)
-    screw = _find(prompt, [r"[мm]\s*(\d+(?:[.,]\d+)?)"], 4)
+    tube = _find(prompt, [
+        r"(\d+(?:[.,]\d+)?)\s*(?:мм|mm)?\s*(?:труб\w*|pipe|tube)",
+        r"(?:труб\w*|pipe|tube)(?:\s+\w+){0,2}?\s*(?:диаметр\w*|[ø⌀d])?\s*(\d+(?:[.,]\d+)?)",
+        r"[ø⌀]\s*(\d+(?:[.,]\d+)?)",
+    ], 25)
+    screw = _find(prompt, [r"\b[мm]\s*(\d+(?:[.,]\d+)?)"], 4)
     ps = (
         Parameter("tube_d", tube, 8, 80, 0.5, label="Диаметр трубы"),
         Parameter("wall", 4, 2, 12, 0.5, label="Толщина стенки"),

@@ -1,0 +1,14 @@
+{
+  "model": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+  "train_file": "data/processed/train.jsonl",
+  "validation_file": "data/processed/validation.jsonl",
+  "output_dir": "outputs/neuroscad-ir-lora",
+  "max_length": 4096,
+  "epochs": 3,
+  "learning_rate": 0.0002,
+  "batch_size": 1,
+  "gradient_accumulation": 16,
+  "lora_rank": 16,
+  "lora_alpha": 32,
+  "seed": 42
+}

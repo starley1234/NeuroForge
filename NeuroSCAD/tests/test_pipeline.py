@@ -8,6 +8,13 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(defaults["tube_d"], 25); self.assertEqual(defaults["screw_d"], 4.4)
         code = compile_openscad(program)
         self.assertIn("difference()", code); self.assertIn("tube_d = 25", code); self.assertIn("rotate([90, 0, 0])", code)
+        self.assertIn("tube_d = 30", compile_openscad(program, {"tube_d": 30}))
+    def test_dimension_word_is_not_m_fastener(self):
+        program = generate("Кронштейн на трубу диаметром 80 мм с винтом М3")
+        values = {p.name: p.default for p in program.parameters}
+        self.assertEqual(values["tube_d"], 80)
+        self.assertEqual(values["screw_d"], 3.4)
+
     def test_static_validation_is_honest(self):
         report = validate_program(generate("pipe clamp 32 mm M5"), render=False)
         self.assertTrue(report["valid"]); self.assertEqual(report["level"], "ir"); self.assertEqual(report["checks"]["geometry"]["status"], "not_run")

@@ -1,0 +1,39 @@
+name: NeuroSCAD CI
+on:
+  push:
+    paths: ['NeuroSCAD/**']
+  pull_request:
+    paths: ['NeuroSCAD/**']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: NeuroSCAD
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: NeuroSCAD/pyproject.toml
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[api,dev]'
+      - run: python -m unittest discover -s tests -v
+      - run: python -m compileall -q neuroscad training
+      - run: python -m training.prepare --output /tmp/neuroscad-data --samples 100 --seed 42
+  container:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: NeuroSCAD
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t neuroscad:ci .
+      - run: docker run -d --name neuroscad -p 8000:8000 --read-only --tmpfs /tmp:rw,size=512m neuroscad:ci
+      - run: |
+          for i in $(seq 1 30); do curl -fsS http://localhost:8000/health/ready && exit 0; sleep 2; done
+          docker logs neuroscad; exit 1
+      - run: curl -fsS -X POST http://localhost:8000/v1/generate -H 'content-type: application/json' -d '{"prompt":"pipe clamp 25 mm M4"}' | grep -q 'camera_bracket\|Camera pipe split clamp'
