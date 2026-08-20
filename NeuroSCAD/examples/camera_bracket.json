@@ -64,13 +64,43 @@
     },
     {
       "name": "lug_height",
-      "default": 12,
-      "minimum": 8,
+      "default": 14,
+      "minimum": 14,
       "maximum": 30,
       "step": 1,
       "unit": "mm",
       "label": "Высота проушины",
       "group": "Dimensions"
+    }
+  ],
+  "constraints": [
+    {
+      "name": "bolt_ligament",
+      "left": {
+        "op": "add",
+        "args": [
+          {
+            "param": "screw_d"
+          },
+          2
+        ]
+      },
+      "relation": "le",
+      "right": {
+        "param": "lug_height"
+      },
+      "message": "Вокруг отверстия должно оставаться не менее 1 мм материала"
+    },
+    {
+      "name": "split_inside_lug",
+      "left": {
+        "param": "split_gap"
+      },
+      "relation": "lt",
+      "right": {
+        "param": "lug_height"
+      },
+      "message": "Разрез должен быть уже проушины"
     }
   ],
   "nodes": [
@@ -337,6 +367,7 @@
   ],
   "metadata": {
     "name": "Camera pipe split clamp",
+    "family": "split_pipe_clamp",
     "source_prompt": "Кронштейн для камеры на трубу 25 мм с фиксацией винтом М4",
     "assumptions": [
       "FDM prototype",

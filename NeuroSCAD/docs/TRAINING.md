@@ -16,7 +16,7 @@
 python3 -m training.prepare --output data/processed --samples 10000 --seed 42
 ```
 
-Получаются `train.jsonl`, `validation.jsonl`, `test.jsonl` и manifest. Split определяется SHA-256 полного набора геометрических параметров: парафразы одной детали не оказываются одновременно в train и test.
+Получаются `train.jsonl`, `validation.jsonl`, `test.jsonl` и manifest. Synthetic v2 равномерно смешивает хомуты, монтажные пластины и втулки, варьирует размеры и формулировки на русском/английском. Каждый target сначала проходит IR/constraint validation. Split определяется SHA-256 семейства и полного набора геометрических параметров: парафразы одной детали не оказываются одновременно в train и test.
 
 ## LoRA SFT
 

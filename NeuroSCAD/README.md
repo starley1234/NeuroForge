@@ -4,12 +4,13 @@
 
 NeuroSCAD преобразует техническое задание в параметрическую модель, но не доверяет генератору: CSG-IR проверяется строгой грамматикой, OpenSCAD создаётся детерминированным компилятором, а уровень фактической проверки явно указывается в отчёте.
 
-> Версия `0.2.0`: production-oriented foundation. Поддерживаемое product family сейчас — разрезные хомуты/кронштейны. Это ещё не универсальная CAD-модель и не средство сертификации деталей.
+> Версия `0.3.0`: production-oriented foundation. Сейчас работают три семейства: хомуты, монтажные пластины и втулки. Обученных нейросетевых весов пока нет: созданы CAD pipeline, эталонные генераторы и training pipeline. Подробно: [что является моделью](docs/MODEL.md).
 
 ## Возможности
 
 - русское/английское ТЗ → параметризованный CSG-IR;
 - безопасный AST: ссылки, арность, циклы, диапазоны, глубина и лимит узлов;
+- инженерные constraints между параметрами и pairwise slider sweep;
 - параметрические выражения и интерактивные sliders;
 - deterministic OpenSCAD, скачивание SCAD/STL/IR;
 - OpenSCAD render с совместимостью старого CLI и Trimesh metrology;
@@ -45,6 +46,7 @@ python3 -m neuroscad.cli generate \
   'Кронштейн для камеры на трубу 25 мм с фиксацией винтом М4' \
   --ir examples/camera_bracket.json --scad examples/camera_bracket.scad
 python3 -m neuroscad.cli validate examples/camera_bracket.json --render
+python3 -m neuroscad.cli validate examples/camera_bracket.json --sweep
 ```
 
 ## Обучение
@@ -92,6 +94,7 @@ Dockerfile / compose        ограниченное runtime-окружение
 
 ## Документация
 
+- [Что мы называем моделью и чего реально ждать](docs/MODEL.md)
 - [Архитектурные решения](docs/ARCHITECTURE.md)
 - [Выбор датасетов и лицензии](docs/DATASETS.md)
 - [Обучение и promotion](docs/TRAINING.md)

@@ -19,6 +19,9 @@ class APITests(unittest.TestCase):
         compiled = self.client.post("/v1/compile", json={"ir": payload["ir"], "overrides": {"tube_d": 30}})
         self.assertEqual(compiled.status_code, 200)
         self.assertIn("tube_d = 30", compiled.json()["openscad"])
+        sweep = self.client.post("/v1/validate/sweep", json={"ir": payload["ir"]})
+        self.assertEqual(sweep.status_code, 200)
+        self.assertGreater(sweep.json()["total"], 20)
         self.assertIn("NEUROSCAD", self.client.get("/").text)
 
     def test_rejects_out_of_range_override_and_extra_fields(self):

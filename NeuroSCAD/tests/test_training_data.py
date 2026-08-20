@@ -10,12 +10,14 @@ class TrainingDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             counts_a = prepare(Path(a), 200, 7); counts_b = prepare(Path(b), 200, 7)
             self.assertEqual(counts_a, counts_b)
-            groups = {}
+            groups, families = {}, set()
             for split in ("train", "validation", "test"):
                 self.assertEqual((Path(a) / f"{split}.jsonl").read_bytes(), (Path(b) / f"{split}.jsonl").read_bytes())
                 for line in (Path(a) / f"{split}.jsonl").read_text(encoding="utf-8").splitlines():
                     row = json.loads(line)
                     self.assertEqual(groups.get(row["group"], split), split)
                     groups[row["group"]] = split
+                    families.add(row["family"])
                     validate(Program.from_dict(row["target"]))
             self.assertEqual(sum(counts_a.values()), 200)
+            self.assertEqual(families, {"split_pipe_clamp", "mounting_plate", "bushing"})

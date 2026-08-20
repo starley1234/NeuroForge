@@ -66,6 +66,36 @@ def render_stl(program: Program, overrides: Mapping[str, float] | None = None) -
         return payload, metrics
 
 
+def validate_parameter_sweep(program: Program, render: bool = False) -> dict[str, Any]:
+    """Test individual min/default/max and pairwise min/max slider combinations."""
+    requested: list[tuple[str, dict[str, float]]] = []
+    for parameter in program.parameters:
+        for point, value in (("minimum", parameter.minimum), ("default", parameter.default), ("maximum", parameter.maximum)):
+            requested.append((f"{parameter.name}:{point}", {parameter.name: value}))
+    # Pairwise corners catch interactions that one-slider-at-a-time tests miss.
+    for index, first in enumerate(program.parameters):
+        for second in program.parameters[index + 1:]:
+            for first_point, first_value in (("min", first.minimum), ("max", first.maximum)):
+                for second_point, second_value in (("min", second.minimum), ("max", second.maximum)):
+                    requested.append((f"{first.name}:{first_point}+{second.name}:{second_point}", {first.name: first_value, second.name: second_value}))
+
+    cases: list[dict[str, Any]] = []
+    for name, overrides in requested:
+        try:
+            validate(program, overrides)
+            if render and len(overrides) == 1:
+                report = validate_program(program, overrides, render=True)
+                ok = report["valid"] and report["level"] in {"geometry", "mesh"}
+                error = None if ok else report["checks"]
+            else:
+                ok, error = True, None
+        except IRError as exc:
+            ok, error = False, str(exc)
+        cases.append({"case": name, "overrides": overrides, "valid": ok, "error": error})
+    passed = sum(case["valid"] for case in cases)
+    return {"valid": passed == len(cases), "passed": passed, "total": len(cases), "rendered": render, "cases": cases}
+
+
 def validate_program(
     program: Program,
     overrides: Mapping[str, float] | None = None,

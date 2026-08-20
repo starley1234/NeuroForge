@@ -17,7 +17,7 @@
       <div class="panel input-panel">
         <div class="panel-title"><span>01</span> Техническое задание</div>
         <textarea id="prompt" maxlength="2000" spellcheck="true">Кронштейн для камеры на трубу 25 мм с фиксацией винтом М4</textarea>
-        <div class="examples"><button data-prompt="Разрезной хомут на трубу 32 мм, винт М5">Ø32 / M5</button><button data-prompt="Крепление на трубу 20 мм с винтом М3">Ø20 / M3</button></div>
+        <div class="examples"><button data-prompt="Разрезной хомут на трубу 32 мм, винт М5">Хомут</button><button data-prompt="Монтажная пластина 80x40x4 мм с четырьмя отверстиями М4">Пластина</button><button data-prompt="Втулка 20/8, высота 15 мм">Втулка</button></div>
         <button class="primary" id="generate"><span>Скомпилировать намерение</span><b>→</b></button>
         <p class="error" id="error" role="alert"></p>
       </div>
@@ -29,6 +29,7 @@
             <rect width="620" height="390" fill="url(#grid)"/><g id="shape" transform="translate(270 195)">
               <circle id="outer" r="108" class="solid"/><circle id="inner" r="78" class="void"/>
               <rect id="gap" x="75" y="-10" width="145" height="20" class="void"/><rect id="lug" x="95" y="-44" width="150" height="88" class="solid back"/><circle id="bolt" cx="170" r="14" class="void bolt"/>
+              <g id="plateHoles"><circle class="void bolt"/><circle class="void bolt"/><circle class="void bolt"/><circle class="void bolt"/></g>
             </g><g class="axis"><path d="M42 350H580"/><path d="M52 360V35"/></g>
             <text x="50" y="28" class="caption" id="diagramLabel">CSG SECTION / DEFAULTS</text>
           </svg>

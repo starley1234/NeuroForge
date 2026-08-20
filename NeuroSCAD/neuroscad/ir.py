@@ -67,6 +67,25 @@ class Parameter:
 
 
 @dataclass(frozen=True)
+class Constraint:
+    """A semantic relationship that must hold for every parameter choice."""
+    name: str
+    left: Expr
+    relation: str
+    right: Expr
+    message: str = ""
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Constraint":
+        return cls(str(data["name"]), data["left"], str(data["relation"]), data["right"], str(data.get("message", "")))
+
+    def to_dict(self) -> dict[str, Any]:
+        result = {"name": self.name, "left": self.left, "relation": self.relation, "right": self.right}
+        if self.message: result["message"] = self.message
+        return result
+
+
+@dataclass(frozen=True)
 class Node:
     id: str
     op: Op
@@ -102,6 +121,7 @@ class Program:
     nodes: tuple[Node, ...]
     parameters: tuple[Parameter, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    constraints: tuple[Constraint, ...] = ()
     version: str = "0.1"
 
     @classmethod
@@ -109,13 +129,16 @@ class Program:
         return cls(
             root=str(data["root"]), nodes=tuple(Node.from_dict(n) for n in data["nodes"]),
             parameters=tuple(Parameter.from_dict(p) for p in data.get("parameters", ())),
-            metadata=dict(data.get("metadata", {})), version=str(data.get("version", "0.1")),
+            metadata=dict(data.get("metadata", {})),
+            constraints=tuple(Constraint.from_dict(c) for c in data.get("constraints", ())),
+            version=str(data.get("version", "0.1")),
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": self.version, "root": self.root,
             "parameters": [p.to_dict() for p in self.parameters],
+            "constraints": [c.to_dict() for c in self.constraints],
             "nodes": [n.to_dict() for n in self.nodes], "metadata": dict(self.metadata),
         }
 
@@ -167,6 +190,19 @@ def validate(program: Program, overrides: Mapping[str, float] | None = None) -> 
         if not params[name].minimum <= value <= params[name].maximum:
             raise IRError(f"{name}: override outside range")
         values[name] = float(value)
+
+    relations = {
+        "lt": lambda a, b: a < b, "le": lambda a, b: a <= b,
+        "gt": lambda a, b: a > b, "ge": lambda a, b: a >= b,
+        "eq": lambda a, b: math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9),
+    }
+    for constraint in program.constraints:
+        if constraint.relation not in relations:
+            raise IRError(f"{constraint.name}: unknown constraint relation")
+        left, right = evaluate(constraint.left, values), evaluate(constraint.right, values)
+        if not relations[constraint.relation](left, right):
+            detail = constraint.message or f"constraint failed: {left:g} {constraint.relation} {right:g}"
+            raise IRError(f"{constraint.name}: {detail}")
 
     nodes = {n.id: n for n in program.nodes}
     if len(nodes) != len(program.nodes): raise IRError("duplicate node id")

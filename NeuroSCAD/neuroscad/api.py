@@ -19,9 +19,9 @@ except ImportError as exc:
 from .compiler import compile_openscad
 from .ir import IRError, Program
 from .templates import generate
-from .validator import render_stl, validate_program
+from .validator import render_stl, validate_parameter_sweep, validate_program
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 app = FastAPI(
     title="NeuroSCAD", version=VERSION,
     docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None,
@@ -95,6 +95,12 @@ def compile_model(request: ProgramRequest) -> dict[str, Any]:
     except IRError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"openscad": code, "validation": report}
+
+
+@app.post("/v1/validate/sweep")
+def validate_sweep(request: ProgramRequest) -> dict[str, Any]:
+    program = _program(request.ir)
+    return validate_parameter_sweep(program, render=request.validate_geometry)
 
 
 @app.post("/v1/export/scad")

@@ -12,14 +12,25 @@ function defaults() { return Object.fromEntries((state.ir?.parameters||[]).map(p
 function selected() { return {...defaults(), ...state.overrides}; }
 
 function renderDiagram() {
-  if (!state.ir) return; const p=selected();
-  const outerD=(p.tube_d||25)+2*(p.wall||4), scale=Math.min(3.2,220/outerD), outer=outerD*scale/2, inner=(p.tube_d||25)*scale/2;
-  $('outer').setAttribute('r',outer); $('inner').setAttribute('r',inner);
-  const x=outer-2, length=(p.lug_length||18)*scale, h=(p.lug_height||12)*scale;
-  $('lug').setAttribute('x',x); $('lug').setAttribute('y',-h/2); $('lug').setAttribute('width',length); $('lug').setAttribute('height',h);
-  $('gap').setAttribute('x',inner-2); $('gap').setAttribute('y',-(p.split_gap||3)*scale/2); $('gap').setAttribute('width',outer-inner+length+8); $('gap').setAttribute('height',(p.split_gap||3)*scale);
-  $('bolt').setAttribute('cx',x+length/2); $('bolt').setAttribute('r',(p.screw_d||4.4)*scale/2);
-  $('diagramLabel').textContent=`SECTION / TUBE Ø${p.tube_d} / WALL ${p.wall}`;
+  if (!state.ir) return; const p=selected(), family=state.ir.metadata?.family||'split_pipe_clamp';
+  const visible=(id,on)=>$(id).style.display=on?'':'none';
+  ['outer','inner','gap','lug','bolt'].forEach(id=>visible(id,false)); visible('plateHoles',false);
+  if (family==='mounting_plate') {
+    const scale=Math.min(3,280/p.plate_length,160/p.plate_width), w=p.plate_length*scale, h=p.plate_width*scale;
+    visible('lug',true); visible('plateHoles',true); $('lug').setAttribute('x',-w/2); $('lug').setAttribute('y',-h/2); $('lug').setAttribute('width',w); $('lug').setAttribute('height',h);
+    const dx=(p.plate_length/2-p.edge_offset)*scale, dy=(p.plate_width/2-p.edge_offset)*scale, r=p.hole_d*scale/2;
+    [...$('plateHoles').children].forEach((hole,i)=>{hole.setAttribute('cx',(i<2?1:-1)*dx);hole.setAttribute('cy',(i%2?1:-1)*dy);hole.setAttribute('r',r);});
+    $('diagramLabel').textContent=`PLATE / ${p.plate_length} × ${p.plate_width} × ${p.thickness}`;
+  } else if (family==='bushing') {
+    const scale=Math.min(4,220/p.outer_d); visible('outer',true); visible('inner',true); $('outer').setAttribute('r',p.outer_d*scale/2); $('inner').setAttribute('r',p.inner_d*scale/2);
+    $('diagramLabel').textContent=`BUSHING / Ø${p.outer_d} / BORE Ø${p.inner_d} / H ${p.height}`;
+  } else {
+    const outerD=(p.tube_d||25)+2*(p.wall||4), scale=Math.min(3.2,220/outerD), outer=outerD*scale/2, inner=(p.tube_d||25)*scale/2;
+    ['outer','inner','gap','lug','bolt'].forEach(id=>visible(id,true)); $('outer').setAttribute('r',outer); $('inner').setAttribute('r',inner);
+    const x=outer-2, length=p.lug_length*scale, h=p.lug_height*scale; $('lug').setAttribute('x',x); $('lug').setAttribute('y',-h/2); $('lug').setAttribute('width',length); $('lug').setAttribute('height',h);
+    $('gap').setAttribute('x',inner-2); $('gap').setAttribute('y',-p.split_gap*scale/2); $('gap').setAttribute('width',outer-inner+length+8); $('gap').setAttribute('height',p.split_gap*scale);
+    $('bolt').setAttribute('cx',x+length/2); $('bolt').setAttribute('r',p.screw_d*scale/2); $('diagramLabel').textContent=`CLAMP / TUBE Ø${p.tube_d} / WALL ${p.wall}`;
+  }
 }
 function renderParameters() {
   const root=$('parameters'); root.textContent='';
