@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AURA-Micro — test console</title>
+  <style>
+    :root {
+      --bg: #07090d;
+      --panel: #10151d;
+      --line: #1e2a38;
+      --text: #e8eef6;
+      --muted: #8aa0b8;
+      --acc: #3ee0b0;
+      --warn: #ffb020;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #143028 0%, var(--bg) 45%);
+      color: var(--text); min-height: 100vh;
+    }
+    header {
+      padding: 28px 32px 8px; display: flex; justify-content: space-between; align-items: end;
+    }
+    h1 { font-weight: 620; letter-spacing: .04em; margin: 0; font-size: 22px; }
+    h1 span { color: var(--acc); }
+    .sub { color: var(--muted); font-size: 13px; }
+    main { padding: 20px 32px 48px; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+    .card {
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px;
+    }
+    button {
+      background: var(--acc); color: #042018; border: 0; border-radius: 10px;
+      padding: 10px 16px; font-weight: 700; cursor: pointer;
+    }
+    button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    select, input {
+      background: #0b1016; color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; padding: 8px 10px;
+    }
+    .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 10px; font-size: 14px; }
+    .k { color: var(--muted); }
+    .pill {
+      display: inline-block; margin: 2px 4px 0 0; padding: 2px 8px; border-radius: 999px;
+      background: #183028; color: var(--acc); font-size: 12px;
+    }
+    pre { margin: 0; font-size: 12px; color: #b7c7d6; overflow: auto; }
+    footer { padding: 0 32px 24px; color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>AURA-<span>Micro</span> console</h1>
+      <div class="sub">3 микрофона · DSP · FastGRNN · 4 головы · тест без железа</div>
+    </div>
+    <div class="sub" id="status">…</div>
+  </header>
+  <main>
+    <section class="card">
+      <div class="row">
+        <button id="go">Случайная сцена</button>
+        <button class="ghost" id="force">Класс → инференс</button>
+        <select id="cls"></select>
+      </div>
+      <p class="sub" style="margin-top:14px">Истина (синтез)</p>
+      <div class="kv" id="truth"></div>
+    </section>
+    <section class="card">
+      <p class="sub">Предсказание сети</p>
+      <div class="kv" id="pred"></div>
+    </section>
+    <section class="card" style="grid-column: 1 / -1">
+      <pre id="raw">{}</pre>
+    </section>
+  </main>
+  <footer>python -m aura_micro serve · train: python -m aura_micro train</footer>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const kv = (el, obj) => {
+      el.innerHTML = Object.entries(obj).map(([k,v]) =>
+        `<div class="k">${k}</div><div>${Array.isArray(v) ? v.map(x=>`<span class="pill">${x}</span>`).join("") : v}</div>`
+      ).join("");
+    };
+    async function boot() {
+      const h = await fetch("/api/health").then(r => r.json());
+      $("status").textContent = h.ok ? "online" : "offline";
+      h.classes.forEach((name, i) => {
+        const o = document.createElement("option");
+        o.value = i; o.textContent = `${i} · ${name}`;
+        $("cls").appendChild(o);
+      });
+    }
+    function show(data) {
+      kv($("truth"), data.truth);
+      kv($("pred"), data.pred);
+      $("raw").textContent = JSON.stringify(data, null, 2);
+    }
+    $("go").onclick = async () => show(await fetch("/api/scene").then(r => r.json()));
+    $("force").onclick = async () => {
+      const body = JSON.stringify({ class_id: Number($("cls").value) });
+      show(await fetch("/api/infer", { method: "POST", headers: {"Content-Type":"application/json"}, body }).then(r => r.json()));
+    };
+    boot().then(() => $("go").click());
+  </script>
+</body>
+</html>

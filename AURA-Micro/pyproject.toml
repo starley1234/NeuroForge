@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aura-micro"
+version = "0.2.0"
+description = "AURA-Micro: Acoustic Ultra-low-power Recurrent Array for wearable 3-mic sensing"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "torch>=2.1",
+  "scipy>=1.11",
+]
+
+[project.scripts]
+aura-micro = "aura_micro.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+include = ["aura_micro*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
