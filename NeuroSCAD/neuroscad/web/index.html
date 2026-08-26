@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="NeuroSCAD — инженерное ТЗ в проверяемую параметрическую CAD-модель">
+  <title>NeuroSCAD — Typed CAD</title><link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header><a class="brand" href="/"><span class="mark">N</span>NEUROSCAD</a><div class="system"><i></i><span id="systemText">проверка системы</span></div></header>
+  <main>
+    <section class="intro">
+      <p class="eyebrow">ENGINEERING INTENT COMPILER / 0.2</p>
+      <h1>От технического задания<br>к <em>проверяемому</em> solid-коду.</h1>
+      <p class="lead">Не чат-бот, рисующий строки. Типизированный CSG-граф, строгая грамматика и воспроизводимый OpenSCAD.</p>
+    </section>
+    <section class="workbench">
+      <div class="panel input-panel">
+        <div class="panel-title"><span>01</span> Техническое задание</div>
+        <textarea id="prompt" maxlength="2000" spellcheck="true">Кронштейн для камеры на трубу 25 мм с фиксацией винтом М4</textarea>
+        <div class="examples"><button data-prompt="Разрезной хомут на трубу 32 мм, винт М5">Хомут</button><button data-prompt="Монтажная пластина 80x40x4 мм с четырьмя отверстиями М4">Пластина</button><button data-prompt="Втулка 20/8, высота 15 мм">Втулка</button></div>
+        <button class="primary" id="generate"><span>Скомпилировать намерение</span><b>→</b></button>
+        <p class="error" id="error" role="alert"></p>
+      </div>
+      <div class="panel viewport-panel">
+        <div class="panel-title"><span>02</span> Конструктивная схема <small>не mesh preview</small></div>
+        <div class="viewport">
+          <svg id="diagram" viewBox="0 0 620 390" aria-label="Схема поперечного сечения хомута">
+            <defs><pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="#25302d" stroke-width="1"/></pattern></defs>
+            <rect width="620" height="390" fill="url(#grid)"/><g id="shape" transform="translate(270 195)">
+              <circle id="outer" r="108" class="solid"/><circle id="inner" r="78" class="void"/>
+              <rect id="gap" x="75" y="-10" width="145" height="20" class="void"/><rect id="lug" x="95" y="-44" width="150" height="88" class="solid back"/><circle id="bolt" cx="170" r="14" class="void bolt"/>
+              <g id="plateHoles"><circle class="void bolt"/><circle class="void bolt"/><circle class="void bolt"/><circle class="void bolt"/></g>
+            </g><g class="axis"><path d="M42 350H580"/><path d="M52 360V35"/></g>
+            <text x="50" y="28" class="caption" id="diagramLabel">CSG SECTION / DEFAULTS</text>
+          </svg>
+          <div class="badge" id="validBadge">ОЖИДАНИЕ IR</div>
+        </div>
+      </div>
+      <div class="panel params-panel">
+        <div class="panel-title"><span>03</span> Параметры</div><div id="parameters" class="empty">Сначала сформируйте модель</div>
+      </div>
+      <div class="panel code-panel">
+        <div class="panel-title"><span>04</span> Артефакты <div class="tabs"><button class="active" data-tab="scad">SCAD</button><button data-tab="ir">IR</button></div></div>
+        <pre id="code">// Здесь появится детерминированный OpenSCAD</pre>
+        <div class="actions"><button id="downloadScad" disabled>↓ SCAD</button><button id="downloadIr" disabled>↓ IR</button><button id="downloadStl" disabled>↓ STL</button></div>
+      </div>
+    </section>
+    <section class="proof"><div><b>GRAMMAR</b><span>typed AST</span></div><div><b>PARAMETRIC</b><span>live constraints</span></div><div><b>VALIDATION</b><span id="level">not run</span></div><div><b>OUTPUT</b><span>SCAD · STL</span></div></section>
+  </main>
+  <footer><span>NEUROSCAD / NEUROFORGE</span><span>Прототип требует инженерной проверки перед производством.</span></footer>
+  <script src="/app.js" defer></script>
+</body></html>

@@ -1,0 +1,16 @@
+.git
+.github
+__pycache__
+*.py[cod]
+.venv
+.pytest_cache
+build
+dist
+data/processed
+data/sql-extracted
+data/openscad-corpus
+data/distilled
+predictions*.jsonl
+evaluation-details*.jsonl
+outputs
+models

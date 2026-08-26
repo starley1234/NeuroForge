@@ -1,0 +1,88 @@
+{
+  "reviewed_at": "2026-08-20",
+  "policy": "Only datasets approved for the intended deployment may enter production training.",
+  "datasets": [
+    {
+      "id": "owner-openscad-500",
+      "use": "primary high-quality OpenSCAD distillation, RAG, golden benchmark",
+      "license": "owner-supplied; record per-file rights",
+      "commercial_training": "approved_if_owned",
+      "adapter": "training.ingest_openscad",
+      "notes": "Split by source hash before teacher paraphrases and edits."
+    },
+    {
+      "id": "neuroscad-synthetic-v2",
+      "use": "pipeline tests and CSG-IR baseline",
+      "license": "Apache-2.0",
+      "commercial_training": "approved",
+      "adapter": "training.prepare"
+    },
+    {
+      "id": "ADSKAILab/Zero-To-CAD-1m",
+      "url": "https://huggingface.co/datasets/ADSKAILab/Zero-To-CAD-1m",
+      "size": "1M",
+      "license": "Apache-2.0",
+      "commercial_training": "candidate",
+      "use": "CAD operation pretraining, geometry diversity, STEP/STL evaluation",
+      "notes": "CadQuery programs and renders; conversion to NeuroSCAD IR must be sandboxed and validated."
+    },
+    {
+      "id": "VladPyatov/CADFS",
+      "url": "https://huggingface.co/datasets/VladPyatov/CADFS",
+      "size": "~100K / 90.5GB",
+      "license": "CC-BY-4.0",
+      "commercial_training": "candidate_with_attribution",
+      "use": "multimodal text/image-to-program pretraining",
+      "notes": "FeatureScript needs a dedicated parser; preserve attribution metadata."
+    },
+    {
+      "id": "kulibinai/cadevolve",
+      "url": "https://huggingface.co/datasets/kulibinai/cadevolve",
+      "size": "~1.3M programs",
+      "license": "Apache-2.0",
+      "commercial_training": "candidate",
+      "use": "executable CadQuery program diversity"
+    },
+    {
+      "id": "gudo7208/CAD-Coder",
+      "url": "https://huggingface.co/datasets/gudo7208/CAD-Coder",
+      "size": "250K",
+      "license": "Apache-2.0 on dataset card",
+      "commercial_training": "legal_review_required",
+      "use": "text-to-CadQuery pairs",
+      "notes": "Dataset says it is synthesized based on Text2CAD; verify upstream rights before commercial use."
+    },
+    {
+      "id": "SadilKhan/Text2CAD",
+      "url": "https://huggingface.co/datasets/SadilKhan/Text2CAD",
+      "size": "605GB full",
+      "license": "CC-BY-NC-SA-4.0 / gated",
+      "commercial_training": "prohibited",
+      "use": "research-only benchmark, never production training"
+    },
+    {
+      "id": "AutodeskAILab/Fusion360GalleryDataset",
+      "url": "https://github.com/AutodeskAILab/Fusion360GalleryDataset",
+      "size": "8,625 reconstruction sequences",
+      "license": "non-commercial research terms",
+      "commercial_training": "prohibited",
+      "use": "research-only generalization benchmark"
+    },
+    {
+      "id": "PrincetonLIPS/SketchGraphs",
+      "url": "https://github.com/PrincetonLIPS/SketchGraphs",
+      "size": "15M sketches",
+      "license": "code MIT; sketch copyrights remain with original creators",
+      "commercial_training": "legal_review_required",
+      "use": "2D constraint research"
+    },
+    {
+      "id": "filapro/cad-recode",
+      "url": "https://huggingface.co/datasets/filapro/cad-recode",
+      "size": "1M programs",
+      "license": "CC-BY-NC-4.0",
+      "commercial_training": "prohibited",
+      "use": "research-only reconstruction benchmark"
+    }
+  ]
+}

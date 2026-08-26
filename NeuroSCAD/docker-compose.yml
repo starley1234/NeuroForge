@@ -1,0 +1,25 @@
+services:
+  neuroscad:
+    build:
+      context: .
+    image: neuroscad:0.4.1
+    restart: unless-stopped
+    ports:
+      - "${NEUROSCAD_PORT:-8000}:8000"
+    environment:
+      NEUROSCAD_RENDER_TIMEOUT: "${NEUROSCAD_RENDER_TIMEOUT:-30}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
