@@ -1,0 +1,61 @@
+# NEXUS-Capital конфигурация для RTX 5060 (16 ГБ VRAM)
+# Соответствует разделу 6 спецификации: активное ядро 1.3B,
+# Sparse MoE 3.5B (8 экспертов, активны 2), Neural SDE 20M.
+
+model:
+  d_value: 1536
+  n_layers: 24
+  n_heads: 12
+  d_ff: 4096
+  dropout: 0.0
+
+encoders:
+  orderbook_levels: 50
+  tick_features: 8
+  tabular_features: 64
+  graph_node_dim: 64
+  audio_n_mels: 64
+  text_vocab_size: 32000
+  text_seq_len: 2048
+
+ttt:
+  rank: 128
+  alpha: 0.95
+  eta: 0.05
+  mem_dim: 256
+
+moe:
+  n_experts: 8
+  experts_per_token: 2
+  expert_ff: 2048
+  expert_names:
+    - risk_var
+    - pricing_unit_econ
+    - macro_fx
+    - legal_compliance
+    - credit_default
+    - liquidity
+    - derivatives
+    - sentiment
+
+sde:
+  hidden: 256
+  steps: 64
+  mc_paths: 10000
+  mc_horizon: 32
+
+utility:
+  gamma_risk: 1.0
+  risk_alpha: 0.05
+  lambda_utility: 1.0
+  lambda_var: 0.5
+  discount_rate: 0.05
+
+training:
+  lr: 3.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+  batch_size: 2
+  steps: 10000
+  use_amp: true
+  use_8bit: true   # 8-bit AdamW / GaLore через bitsandbytes
