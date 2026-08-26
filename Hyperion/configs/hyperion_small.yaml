@@ -1,0 +1,49 @@
+# Конфигурация Hyperion — малая модель для ограниченных ресурсов
+# ~0.1B параметров, обучается на одной GPU 8-12 ГБ
+
+model:
+  dim: 512
+  n_layers: 6
+  vocab_size: 32000
+
+  # MLA
+  mla_heads: 8
+  mla_kv_lora_rank: 64
+  mla_rope_head_dim: 32
+
+  # Mamba-3
+  mamba_state_dim: 48
+  mamba_conv_kernel: 4
+
+  # Titans Memory
+  memory_dim: 128
+  memory_depth: 2
+  memory_surprise_threshold: 0.3
+  memory_decay: 0.99
+
+  # MoSE
+  mose_experts: 8
+  mose_top_k: 2
+  mose_shared_experts: 1
+  mose_nested_widths: 3
+
+  # JEPA
+  jepa_enabled: true
+  jepa_pred_dim: 256
+
+  # MTP
+  mtp_depth: 1
+
+  # Пропорции слоёв
+  ssm_ratio: 0.5
+  attn_ratio: 0.25
+  memory_ratio: 0.25
+
+  dropout: 0.0
+  max_seq_len: 4096
+
+training:
+  lr: 3e-4
+  weight_decay: 0.1
+  warmup_steps: 500
+  batch_size: 8
