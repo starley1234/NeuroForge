@@ -1,0 +1,20 @@
+# Скрипты должны иметь «родные» окончания строк независимо от core.autocrlf:
+# иначе bash в WSL падает с `env: $'bash\r': No such file or directory`,
+# а PowerShell не читает UTF-8 без BOM.
+* text=auto eol=lf
+
+*.sh    text eol=lf
+*.py    text eol=lf
+*.scad  text eol=lf
+*.md    text eol=lf
+Makefile text eol=lf
+
+*.ps1   text eol=crlf working-tree-encoding=UTF-8
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+*.png binary
+*.jpg binary
+*.stl binary
+*.npz binary
+*.pt  binary
